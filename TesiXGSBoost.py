@@ -32,7 +32,8 @@ from xgboost import XGBClassifier
 from scipy.optimize import minimize
 
 #COSTANTI
-TEST_SIZE = 0.2         #Percentuale del 20% di test rispetto al training
+TEST_SIZE = 0.2         #Percentuale del 20% di test per dare i risultati finali
+VALIDATION_SIZE = 0.2   #Percentuale del 20% di parte validazione
 RANDOM_SEED = 42        #Inizializzazione del random seed
 
 #Inizializzo il Random Seed (per avere sempre gli stessi risultati)
@@ -42,6 +43,9 @@ np.random.seed(RANDOM_SEED)
 path_file="steel_plates_faults.xlsx"
 folder_export = "export_dati"
 
+#Parametri di debug
+SKIP_STEP5 = False
+SKIP_STEP6 = False
 
 #varie utility
 # region STEP 0
@@ -123,24 +127,31 @@ print(f"Dataset pronto. Feature: {X.shape[1]}, Campioni: {X.shape[0]}")
     #Stratify per prendere una perc di tutti i difetti
     
 print("\n--- STEP 3: Split e Scaling ---")
-X_train_initial, X_test_initial, y_train, y_test = train_test_split(
+X_temp, X_test_initial, y_temp, y_test = train_test_split(
     X, y_encoded, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=y_encoded)
 
+    #qui prendo i valori di validazione 
+
+X_train_initial, X_val_initial, y_train, y_val = train_test_split(
+    X_temp, y_temp, test_size=VALIDATION_SIZE / (1-TEST_SIZE), random_state=RANDOM_SEED, stratify=y_temp)
 
 #Scalo ma rimuove i titoli
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train_initial)
+X_val_scaled = scaler.transform(X_val_initial)
 X_test_scaled = scaler.transform(X_test_initial)
 
 #Rimetto i titoli
 X_train = pd.DataFrame(X_train_scaled, columns=X.columns)
+X_val = pd.DataFrame(X_val_scaled, columns=X.columns)
 X_test = pd.DataFrame(X_test_scaled, columns=X.columns)
 
 # Salvo i dati scalati 
 X_train.to_excel(f"{folder_export}/03_Step3_Train_Scalato.xlsx", index=False)
 X_test.to_excel(f"{folder_export}/03_Step3_Test_Scalato.xlsx", index=False)
 
-print("\n--- STEP 3: Dati divisi e scalati---")
+print("\n--- STEP 3: Dati divisi e scalati: ")
+print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 #endregion
 
 
@@ -150,113 +161,129 @@ print("\n--- STEP 3: Dati divisi e scalati---")
 print("\n--- STEP 4: Training  ---")
 
 model = XGBClassifier(
-    n_estimators=200, learning_rate=0.05, max_depth=6,
-    objective='multi:softprob', random_state=RANDOM_SEED, eval_metric='mlogloss'
+    n_estimators=200, 
+    learning_rate=0.05, 
+    max_depth=6,
+    objective='multi:softprob', 
+    random_state=RANDOM_SEED, 
+    eval_metric='mlogloss',
+    early_stopping_rounds=10  # SE l'errore sulla Validazione non scende per 10 cicli di fila
 )
-model.fit(X_train, y_train)
 
-print("\n--- STEP 4: Training finito  ---")
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],
+    verbose=False # Qui lo mettiamo True per vedere quando si ferma
+)
+
+# RIcavo di dati come si è spostato
+numero_cicli = model.best_iteration + 1 
+miglior_score = model.best_score
+
+print(f"\n--- STEP 4: Training finito  dopo {numero_cicli} cicli con il punteggio {miglior_score:.4f} ---")
 #endregion
 
 
 #Valutazione
 #region STEP 5
-print("\n--- STEP 5: Valutazione ---")
-y_pred = model.predict(X_test)
-target_names = label_encoder.classes_
+if not SKIP_STEP5:
+    print("\n--- STEP 5: Valutazione ---")
+    y_pred = model.predict(X_test)
+    target_names = label_encoder.classes_
 
-print(f"Accuratezza: {accuracy_score(y_test, y_pred):.2%}\n")
-print(classification_report(y_test, y_pred, target_names=target_names))
+    print(f"Accuratezza: {accuracy_score(y_test, y_pred):.2%}\n")
+    print(classification_report(y_test, y_pred, target_names=target_names))
 
 #endregion
 
 
 # Cerco un valore con difetto e vedo quali sono i parametri da modifcare 
 #region STEP 6
-print("\n--- STEP 6: Analisi prescrittiva  ---")
+if not SKIP_STEP6:
+    print("\n--- STEP 6: Analisi prescrittiva  ---")
 
-# Trovo il caso critico
-probs = model.predict_proba(X_test)
+    # Trovo il caso critico
+    probs = model.predict_proba(X_test)
 
-# Ignoro i pezzi perfetti!
-# Troviamo l'indice (il numero) della categoria 'Nessun_Difetto'
-idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
-# Creo una copia dell'array probs e azzero le probabilità dei  pezzi sani
-probs_solo_difetti = probs.copy()
-probs_solo_difetti[:, idx_nessun_difetto] = 0.0
+    # Ignoro i pezzi perfetti!
+    # Troviamo l'indice (il numero) della categoria 'Nessun_Difetto'
+    idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
+    # Creo una copia dell'array probs e azzero le probabilità dei  pezzi sani
+    probs_solo_difetti = probs.copy()
+    probs_solo_difetti[:, idx_nessun_difetto] = 0.0
 
-# Cerco il difetto con probabilità più alta
-max_probs = np.max(probs_solo_difetti, axis=1)
-worst_case_idx = np.argmax(max_probs)
+    # Cerco il difetto con probabilità più alta
+    max_probs = np.max(probs_solo_difetti, axis=1)
+    worst_case_idx = np.argmax(max_probs)
 
-#Scalo il valore trovato
-riga_scalata = X_test.iloc[worst_case_idx].values.reshape(1, -1)
-riga_reale = scaler.inverse_transform(riga_scalata)
-caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
+    #Scalo il valore trovato
+    riga_scalata = X_test.iloc[worst_case_idx].values.reshape(1, -1)
+    riga_reale = scaler.inverse_transform(riga_scalata)
+    caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
 
-difetto_previsto_idx = np.argmax(probs[worst_case_idx])
-difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
-prob_iniziale = probs[worst_case_idx][difetto_previsto_idx]
+    difetto_previsto_idx = np.argmax(probs[worst_case_idx])
+    difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
+    prob_iniziale = probs[worst_case_idx][difetto_previsto_idx]
 
-#Stampo a video il valore trovato
-print(f"\nCASO IN ESAME (Riga {worst_case_idx}):")
-print(f"Difetto Rilevato: {difetto_nome} (Probabilità: {prob_iniziale:.2%})")
-print("Parametri Attuali (Reali):")
-print(f"- Temperatura: {caso_reale['Rolling_Temp_C']:.2f} °C")
-print(f"- Velocità:    {caso_reale['Roller_Speed_m_sec']:.2f} m/s")
-print(f"- Pressione:   {caso_reale['Pressure_Bar']:.2f} Bar")
+    #Stampo a video il valore trovato
+    print(f"\nCASO IN ESAME (Riga {worst_case_idx}):")
+    print(f"Difetto Rilevato: {difetto_nome} (Probabilità: {prob_iniziale:.2%})")
+    print("Parametri Attuali (Reali):")
+    print(f"- Temperatura: {caso_reale['Rolling_Temp_C']:.2f} °C")
+    print(f"- Velocità:    {caso_reale['Roller_Speed_m_sec']:.2f} m/s")
+    print(f"- Pressione:   {caso_reale['Pressure_Bar']:.2f} Bar")
 
-cols = X_test.columns.tolist()
-idx_temp = cols.index('Rolling_Temp_C')
-idx_speed = cols.index('Roller_Speed_m_sec')
-idx_press = cols.index('Pressure_Bar')
-
-
-#Creo una funzione per essere utilizzato dall'ottimizzatore 
-def objective_function(x_new):
-    row_simulation = caso_reale.values.copy()   # Copio tutte le variabili
-    row_simulation[idx_temp] = x_new[0]         # Metto nella parte di simulazioni i dati di tentativo 
-    row_simulation[idx_speed] = x_new[1]        #
-    row_simulation[idx_press] = x_new[2]        #
-    # --- Ricreiamo il DataFrame con i nomi delle colonne ---
-    row_df = pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns)
-    # Scalo i valori
-    row_scaled = scaler.transform(row_df)
-    # Calcolo la probabilità di avere i difetti
-    prediction = model.predict_proba(row_scaled)
-    return prediction[0][difetto_previsto_idx]
-# fine della funzione 
-
-#Primo tentativo
-#bounds = [(800, 1100), (5, 20), (150, 300)]
-#Imposto i limiti
-bounds = [(900, 1000), (9, 15), (150, 250)]
+    cols = X_test.columns.tolist()
+    idx_temp = cols.index('Rolling_Temp_C')
+    idx_speed = cols.index('Roller_Speed_m_sec')
+    idx_press = cols.index('Pressure_Bar')
 
 
-print("\nAvvio ottimizzazione matematica...")
+    #Creo una funzione per essere utilizzato dall'ottimizzatore 
+    def objective_function(x_new):
+        row_simulation = caso_reale.values.copy()   # Copio tutte le variabili
+        row_simulation[idx_temp] = x_new[0]         # Metto nella parte di simulazioni i dati di tentativo 
+        row_simulation[idx_speed] = x_new[1]        #
+        row_simulation[idx_press] = x_new[2]        #
+        # --- Ricreiamo il DataFrame con i nomi delle colonne ---
+        row_df = pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns)
+        # Scalo i valori
+        row_scaled = scaler.transform(row_df)
+        # Calcolo la probabilità di avere i difetti
+        prediction = model.predict_proba(row_scaled)
+        return prediction[0][difetto_previsto_idx]
+    # fine della funzione 
 
-x0 = [caso_reale['Rolling_Temp_C'], 
-        caso_reale['Roller_Speed_m_sec'], 
-        caso_reale['Pressure_Bar']]
+    #Primo tentativo
+    #bounds = [(800, 1100), (5, 20), (150, 300)]
+    #Imposto i limiti
+    bounds = [(900, 1000), (9, 15), (150, 250)]
 
-#Algoritmo di ottimizzazione
-#Questo non funzionava per via del problòema della derivata
-#result = minimize(objective_function, x0, method='L-BFGS-B', bounds=bounds, tol=1e-4)
-result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
 
-#Stampo a video il risultato ottenuto 
-if result.success:
-    new_temp, new_speed, new_press = result.x
-    new_prob = result.fun
-    
-    print("\n--- PRESCRIZIONE OPERATIVA ---")
-    print(f"Per ridurre il rischio '{difetto_nome}':")
-    print(f"1. Temperatura: {new_temp:.2f} °C (era {x0[0]:.2f})")
-    print(f"2. Velocità:    {new_speed:.2f} m/s (era {x0[1]:.2f})")
-    print(f"3. Pressione:   {new_press:.2f} Bar (era {x0[2]:.2f})")
-    print(f"\nRischio ridotto dal {prob_iniziale:.2%} al {new_prob:.2%}")
-else:
-    print("Ottimizzazione fallita:", result.message)
+    print("\nAvvio ottimizzazione matematica...")
+
+    x0 = [caso_reale['Rolling_Temp_C'], 
+            caso_reale['Roller_Speed_m_sec'], 
+            caso_reale['Pressure_Bar']]
+
+    #Algoritmo di ottimizzazione
+    #Questo non funzionava per via del problòema della derivata
+    #result = minimize(objective_function, x0, method='L-BFGS-B', bounds=bounds, tol=1e-4)
+    result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
+
+    #Stampo a video il risultato ottenuto 
+    if result.success:
+        new_temp, new_speed, new_press = result.x
+        new_prob = result.fun
+        
+        print("\n--- PRESCRIZIONE OPERATIVA ---")
+        print(f"Per ridurre il rischio '{difetto_nome}':")
+        print(f"1. Temperatura: {new_temp:.2f} °C (era {x0[0]:.2f})")
+        print(f"2. Velocità:    {new_speed:.2f} m/s (era {x0[1]:.2f})")
+        print(f"3. Pressione:   {new_press:.2f} Bar (era {x0[2]:.2f})")
+        print(f"\nRischio ridotto dal {prob_iniziale:.2%} al {new_prob:.2%}")
+    else:
+        print("Ottimizzazione fallita:", result.message)
 #endregion
 
 
