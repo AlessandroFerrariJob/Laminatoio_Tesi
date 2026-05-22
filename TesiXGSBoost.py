@@ -24,6 +24,8 @@ Dipendenze:
 import pandas as pd
 import numpy as np
 import os
+import matplotlib.pyplot as plt
+
 from ucimlrepo import fetch_ucirepo
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -46,6 +48,7 @@ folder_export = "export_dati"
 #Parametri di debug
 SKIP_STEP5 = False
 SKIP_STEP6 = False
+PRINT_GRAPH = True  #Visualizzo il grafico dell'errore
 
 #varie utility
 # region STEP 0
@@ -161,7 +164,7 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 print("\n--- STEP 4: Training  ---")
 
 model = XGBClassifier(
-    n_estimators=200, 
+    n_estimators=300, 
     learning_rate=0.05, 
     max_depth=6,
     objective='multi:softprob', 
@@ -172,15 +175,49 @@ model = XGBClassifier(
 
 model.fit(
     X_train, y_train,
-    eval_set=[(X_val, y_val)],
-    verbose=False # Qui lo mettiamo True per vedere quando si ferma
+    eval_set=[(X_train, y_train), (X_test, y_test)], # In XGBoost, il primo è validation_0, il secondo è validation_1
+    verbose=False
 )
 
 # RIcavo di dati come si è spostato
-numero_cicli = model.best_iteration + 1 
+miglior_iterazione = model.best_iteration + 1 
 miglior_score = model.best_score
 
-print(f"\n--- STEP 4: Training finito  dopo {numero_cicli} cicli con il punteggio {miglior_score:.4f} ---")
+print(f"Training completato. Il modello si è fermato a {miglior_iterazione} alberi.")
+print(f"Miglior errore (mlogloss) su Validazione: {miglior_score:.4f}")
+
+# VISUALIZZO IL GRAFICO
+if PRINT_GRAPH:
+
+    # Estraiamo lo storico degli errori
+    risultati = model.evals_result()
+
+    # Estraiamo i dati di errore per il Train (validation_0) e la Validazione (validation_1)
+    errore_train = risultati['validation_0']['mlogloss']
+    errore_val = risultati['validation_1']['mlogloss']
+    epoche = range(0, len(errore_train))
+
+    # Disegniamo il grafico
+    plt.figure(figsize=(10, 6))
+    plt.plot(epoche, errore_train, label='Errore di Addestramento (Train)', color='blue')
+    plt.plot(epoche, errore_val, label='Errore di Validazione (Validation)', color='orange')
+
+    # Aggiungiamo una linea verticale nel punto esatto in cui è intervenuto l'Early Stopping
+    plt.axvline(x=miglior_iterazione, color='red', linestyle='--', label=f'Miglior Iterazione ({miglior_iterazione})')
+
+    # Impaginazione per la tesi
+    plt.title('Curva di Apprendimento XGBoost - Rilevamento Difetti Acciaio')
+    plt.xlabel('Numero di Alberi (Iterazioni)')
+    plt.ylabel('Errore ') #(Multi-LogLoss)
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.7)
+
+    # Mostra il grafico a schermo
+    plt.show()
+
+
+
+
 #endregion
 
 
