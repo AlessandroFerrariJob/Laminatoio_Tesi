@@ -32,6 +32,8 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from xgboost import XGBClassifier
 from scipy.optimize import minimize
+from sklearn.model_selection import train_test_split, GridSearchCV
+
 
 #COSTANTI
 TEST_SIZE = 0.2         #Percentuale del 20% di test per dare i risultati finali
@@ -48,7 +50,7 @@ folder_export = "export_dati"
 #Parametri di debug
 SKIP_STEP5 = False
 SKIP_STEP6 = False
-PRINT_GRAPH = True  #Visualizzo il grafico dell'errore
+PRINT_GRAPH = False  #Visualizzo il grafico dell'errore
 
 #varie utility
 # region STEP 0
@@ -161,21 +163,88 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 #Training
 #region STEP 4
 
-print("\n--- STEP 4: Training  ---")
+print("\n--- STEP 4: Ricerca Iperparametri XGBoost  ---")
 
+# Definisco il modello base XGBoost
+xgb_base = XGBClassifier(
+    objective='multi:softprob', 
+    random_state=RANDOM_SEED, 
+    eval_metric='mlogloss'
+)
+
+# Definisco la "griglia" dei parametri da testare
+# ---------------    VERIFICARE SE CAMBIARE I VALORI     ----------------------------------------
+param_grid = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [3, 6, 9],
+    'learning_rate': [0.01, 0.05, 0.1]
+}
+
+# Configuro la Grid Search (CV=3 significa che fa una validazione incrociata a 3 fold)
+grid_search = GridSearchCV(
+    estimator=xgb_base,
+    param_grid=param_grid,
+    scoring='accuracy',  # Ottimizziamo per accuratezza generale
+    cv=3,
+    verbose=1, # Stampa a video l'avanzamento
+    n_jobs=None  
+)
+
+print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * len(param_grid['max_depth']) * len(param_grid['learning_rate'])} combinazioni...")
+
+# Avvio l'addestramento intensivo 
+grid_search.fit(X_train, y_train)
+
+# Creo la Tabella dei Risultati
+results_df = pd.DataFrame(grid_search.cv_results_)
+
+# Seleziono solo le colonne utili per la presentazione e le ordino per risultato migliore
+colonne_utili = ['param_learning_rate', 'param_max_depth', 'param_n_estimators', 'mean_test_score', 'std_test_score', 'rank_test_score']
+tabella_risultati = results_df[colonne_utili].sort_values(by='rank_test_score')
+
+# Rinomino le colonne per averle già pronte e pulite in italiano per l'Excel
+tabella_risultati.rename(columns={
+    'param_learning_rate': 'Learning Rate',
+    'param_max_depth': 'Max Depth',
+    'param_n_estimators': 'N. Alberi',
+    'mean_test_score': 'Accuratezza Media (CV)',
+    'std_test_score': 'Deviazione Standard',
+    'rank_test_score': 'Posizione'
+}, inplace=True)
+
+# Arrotondo i numeri per una migliore leggibilità
+tabella_risultati['Accuratezza Media (CV)'] = tabella_risultati['Accuratezza Media (CV)'].apply(lambda x: f"{x:.2%}")
+tabella_risultati['Deviazione Standard'] = tabella_risultati['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
+
+# Stampo la Top 5 a video
+print("\n--- I MIGLIORI 5 RISULTATI XGBOOST ---")
+print(tabella_risultati.head(5).to_string(index=False))
+
+# Salvo la tabella in Excel (utilissima da incollare nelle slide/tesi)
+tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
+print(f"\nTabella completa salvata in: {folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx")
+
+# 6. Salvo il modello migliore per passarlo allo STEP 5 e STEP 6
+model = grid_search.best_estimator_
+print(f"\nMigliori iperparametri trovati: {grid_search.best_params_}")
+
+# Salviamo i parametri migliori in questa variabile esatta
+migliori_parametri = grid_search.best_params_
+
+print("\nAllenamento del modello finale con i parametri ottimali (necessario per grafico ed Early Stopping)...")
 model = XGBClassifier(
-    n_estimators=300, 
-    learning_rate=0.05, 
-    max_depth=6,
+    n_estimators=migliori_parametri['n_estimators'], 
+    learning_rate=migliori_parametri['learning_rate'], 
+    max_depth=migliori_parametri['max_depth'],
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
     eval_metric='mlogloss',
-    early_stopping_rounds=10  # SE l'errore sulla Validazione non scende per 10 cicli di fila
+    early_stopping_rounds=10  
 )
 
 model.fit(
     X_train, y_train,
-    eval_set=[(X_train, y_train), (X_test, y_test)], # In XGBoost, il primo è validation_0, il secondo è validation_1
+    eval_set=[(X_train, y_train), (X_test, y_test)], 
     verbose=False
 )
 
