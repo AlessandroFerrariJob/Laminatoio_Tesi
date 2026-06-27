@@ -33,6 +33,7 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from xgboost import XGBClassifier
 from scipy.optimize import minimize
 from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.neural_network import MLPClassifier
 
 
 #COSTANTI
@@ -161,7 +162,7 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 
 
 #Training
-#region STEP 4
+#region STEP 4A  XGBoost
 
 print("\n--- STEP 4: Ricerca Iperparametri XGBoost  ---")
 
@@ -289,17 +290,114 @@ if PRINT_GRAPH:
 
 #endregion
 
+#region STEP 4B: Rete Neurale (Multilayer Perceptron)
+
+print("\n--- STEP 4B: Ricerca Iperparametri MLP (Grid Search) ---")
+
+# 1. Definisco il modello base MLP
+# Uso early_stopping=True e un max_iter alto per permettere alla rete di convergere senza andare in overfitting
+mlp_base = MLPClassifier(
+    max_iter=1000,       
+    early_stopping=True, 
+    random_state=RANDOM_SEED
+)
+
+# 2. Definisco la griglia dei parametri
+param_grid_mlp = {
+    'hidden_layer_sizes': [(50,), (100,), (50, 25)], # Architettura dei neuroni
+    'activation': ['relu', 'tanh'],                  # Funzioni di attivazione
+    'learning_rate_init': [0.001, 0.01],             # Velocità di apprendimento iniziale
+    'alpha': [0.0001, 0.01]                          # Regolarizzazione (L2 penalty)
+}
+
+# 3. Configuro la Grid Search 
+grid_search_mlp = GridSearchCV(
+    estimator=mlp_base,
+    param_grid=param_grid_mlp,
+    scoring='accuracy',  
+    cv=3,
+    verbose=1,
+    n_jobs=None  # Evita il blocco su Windows
+)
+
+print(f"Inizio addestramento Grid Search MLP per {len(param_grid_mlp['hidden_layer_sizes']) * len(param_grid_mlp['activation']) * len(param_grid_mlp['learning_rate_init']) * len(param_grid_mlp['alpha'])} combinazioni...")
+grid_search_mlp.fit(X_train, y_train)
+
+# 4. Creazione della Tabella dei Risultati MLP
+results_mlp_df = pd.DataFrame(grid_search_mlp.cv_results_)
+colonne_utili_mlp = ['param_hidden_layer_sizes', 'param_activation', 'param_learning_rate_init', 'param_alpha', 'mean_test_score', 'std_test_score', 'rank_test_score']
+tabella_risultati_mlp = results_mlp_df[colonne_utili_mlp].sort_values(by='rank_test_score')
+
+# Rinomino le colonne per averle in italiano e pronte per l'Excel
+tabella_risultati_mlp.rename(columns={
+    'param_hidden_layer_sizes': 'Neuroni e Livelli Nascosti',
+    'param_activation': 'Attivazione',
+    'param_learning_rate_init': 'Learning Rate',
+    'param_alpha': 'Regolarizzazione (Alpha)',
+    'mean_test_score': 'Accuratezza Media (CV)',
+    'std_test_score': 'Deviazione Standard',
+    'rank_test_score': 'Posizione'
+}, inplace=True)
+
+tabella_risultati_mlp['Accuratezza Media (CV)'] = tabella_risultati_mlp['Accuratezza Media (CV)'].apply(lambda x: f"{x:.2%}")
+tabella_risultati_mlp['Deviazione Standard'] = tabella_risultati_mlp['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
+
+print("\n--- I MIGLIORI 5 RISULTATI MLP ---")
+print(tabella_risultati_mlp.head(5).to_string(index=False))
+
+# Salvo la tabella in Excel per il confronto diretto con XGBoost
+tabella_risultati_mlp.to_excel(f"{folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx", index=False)
+print(f"\nTabella MLP salvata in: {folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx")
+
+# 5. ESTRAZIONE PARAMETRI OTTimali E ADDESTRAMENTO FINALE
+migliori_parametri_mlp = grid_search_mlp.best_params_
+print(f"\nMigliori iperparametri MLP trovati: {migliori_parametri_mlp}")
+
+print("\nAllenamento del modello MLP finale con i parametri ottimali...")
+model_mlp = MLPClassifier(
+    hidden_layer_sizes=migliori_parametri_mlp['hidden_layer_sizes'],
+    activation=migliori_parametri_mlp['activation'],
+    learning_rate_init=migliori_parametri_mlp['learning_rate_init'],
+    alpha=migliori_parametri_mlp['alpha'],
+    max_iter=1000,
+    early_stopping=True,
+    random_state=RANDOM_SEED
+)
+
+# Addestramento della rete definitiva
+model_mlp.fit(X_train, y_train)
+
+# VISUALIZZO IL GRAFICO DEL PERCETTRONE (Curva di perdita)
+if PRINT_GRAPH:
+    plt.figure(figsize=(10, 6))
+    plt.plot(model_mlp.loss_curve_, label='Curva di Errore (Loss)', color='green', linewidth=2)
+    plt.title('Curva di Apprendimento MLP - Rilevamento Difetti Acciaio')
+    plt.xlabel('Iterazioni (Epoche)')
+    plt.ylabel('Errore (Loss)')
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.7)
+    plt.show()
+
+#endregion
+
 
 #Valutazione
 #region STEP 5
 if not SKIP_STEP5:
-    print("\n--- STEP 5: Valutazione ---")
-    y_pred = model.predict(X_test)
+    print("\n=== STEP 5: VALUTAZIONE COMPARATIVA ===")
     target_names = label_encoder.classes_
 
-    print(f"Accuratezza: {accuracy_score(y_test, y_pred):.2%}\n")
-    print(classification_report(y_test, y_pred, target_names=target_names))
+    # 1. Valutazione XGBoost
+    y_pred_xgb = model.predict(X_test)
+    print("\n--- METRICHE XGBOOST ---")
+    print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_xgb):.2%}")
+    print(classification_report(y_test, y_pred_xgb, target_names=target_names))
 
+    # 2. Valutazione MLP (Rete Neurale)
+    y_pred_mlp = model_mlp.predict(X_test)
+    print("\n--- METRICHE PERCETTRONE MULTISTRATO (MLP) ---")
+    print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
+    print(classification_report(y_test, y_pred_mlp, target_names=target_names))
 #endregion
 
 
