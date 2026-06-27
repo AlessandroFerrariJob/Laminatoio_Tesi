@@ -35,6 +35,15 @@ from scipy.optimize import minimize
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.neural_network import MLPClassifier
 
+import warnings
+from scipy.optimize import OptimizeWarning
+
+# Ignoro  il warning sui nomi delle feature mancanti (tipico di scikit-learn durante predict)
+warnings.filterwarnings("ignore", message="X does not have valid feature names")
+
+# Ignoro il warning di SciPy quando il punto di partenza (x0) è fuori dai bounds
+warnings.filterwarnings("ignore", category=OptimizeWarning)
+
 
 #COSTANTI
 TEST_SIZE = 0.2         #Percentuale del 20% di test per dare i risultati finali
@@ -404,90 +413,128 @@ if not SKIP_STEP5:
 # Cerco un valore con difetto e vedo quali sono i parametri da modifcare 
 #region STEP 6
 if not SKIP_STEP6:
-    print("\n--- STEP 6: Analisi prescrittiva  ---")
+    print("\n--- STEP 6: Analisi Prescrittiva Comparativa ---")
 
-    # Trovo il caso critico
-    probs = model.predict_proba(X_test)
+    # Creiamo una lista contenente il nome e la variabile dei due modelli da testare
+    modelli_da_testare = [
+        ("XGBoost", model),
+        ("Percettrone Multistrato (MLP)", model_mlp)
+    ]
 
-    # Ignoro i pezzi perfetti!
-    # Troviamo l'indice (il numero) della categoria 'Nessun_Difetto'
-    idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
-    # Creo una copia dell'array probs e azzero le probabilità dei  pezzi sani
-    probs_solo_difetti = probs.copy()
-    probs_solo_difetti[:, idx_nessun_difetto] = 0.0
-
-    # Cerco il difetto con probabilità più alta
-    max_probs = np.max(probs_solo_difetti, axis=1)
-    worst_case_idx = np.argmax(max_probs)
-
-    #Scalo il valore trovato
-    riga_scalata = X_test.iloc[worst_case_idx].values.reshape(1, -1)
-    riga_reale = scaler.inverse_transform(riga_scalata)
-    caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
-
-    difetto_previsto_idx = np.argmax(probs[worst_case_idx])
-    difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
-    prob_iniziale = probs[worst_case_idx][difetto_previsto_idx]
-
-    #Stampo a video il valore trovato
-    print(f"\nCASO IN ESAME (Riga {worst_case_idx}):")
-    print(f"Difetto Rilevato: {difetto_nome} (Probabilità: {prob_iniziale:.2%})")
-    print("Parametri Attuali (Reali):")
-    print(f"- Temperatura: {caso_reale['Rolling_Temp_C']:.2f} °C")
-    print(f"- Velocità:    {caso_reale['Roller_Speed_m_sec']:.2f} m/s")
-    print(f"- Pressione:   {caso_reale['Pressure_Bar']:.2f} Bar")
-
-    cols = X_test.columns.tolist()
-    idx_temp = cols.index('Rolling_Temp_C')
-    idx_speed = cols.index('Roller_Speed_m_sec')
-    idx_press = cols.index('Pressure_Bar')
-
-
-    #Creo una funzione per essere utilizzato dall'ottimizzatore 
-    def objective_function(x_new):
-        row_simulation = caso_reale.values.copy()   # Copio tutte le variabili
-        row_simulation[idx_temp] = x_new[0]         # Metto nella parte di simulazioni i dati di tentativo 
-        row_simulation[idx_speed] = x_new[1]        #
-        row_simulation[idx_press] = x_new[2]        #
-        # --- Ricreiamo il DataFrame con i nomi delle colonne ---
-        row_df = pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns)
-        # Scalo i valori
-        row_scaled = scaler.transform(row_df)
-        # Calcolo la probabilità di avere i difetti
-        prediction = model.predict_proba(row_scaled)
-        return prediction[0][difetto_previsto_idx]
-    # fine della funzione 
-
-    #Primo tentativo
-    #bounds = [(800, 1100), (5, 20), (150, 300)]
-    #Imposto i limiti
-    bounds = [(900, 1000), (9, 15), (150, 250)]
-
-
-    print("\nAvvio ottimizzazione matematica...")
-
-    x0 = [caso_reale['Rolling_Temp_C'], 
-            caso_reale['Roller_Speed_m_sec'], 
-            caso_reale['Pressure_Bar']]
-
-    #Algoritmo di ottimizzazione
-    #Questo non funzionava per via del problòema della derivata
-    #result = minimize(objective_function, x0, method='L-BFGS-B', bounds=bounds, tol=1e-4)
-    result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
-
-    #Stampo a video il risultato ottenuto 
-    if result.success:
-        new_temp, new_speed, new_press = result.x
-        new_prob = result.fun
+    # Il ciclo eseguirà tutta l'analisi prima per XGBoost e poi per l'MLP
+    for nome_modello, modello_corrente in modelli_da_testare:
         
-        print("\n--- PRESCRIZIONE OPERATIVA ---")
-        print(f"Per ridurre il rischio '{difetto_nome}':")
-        print(f"1. Temperatura: {new_temp:.2f} °C (era {x0[0]:.2f})")
-        print(f"2. Velocità:    {new_speed:.2f} m/s (era {x0[1]:.2f})")
-        print(f"3. Pressione:   {new_press:.2f} Bar (era {x0[2]:.2f})")
-        print(f"\nRischio ridotto dal {prob_iniziale:.2%} al {new_prob:.2%}")
-    else:
-        print("Ottimizzazione fallita:", result.message)
+        print(f"\n{'='*50}")
+        print(f" INIZIO OTTIMIZZAZIONE CON: {nome_modello}")
+        print(f"{'='*50}")
+
+        # Trovo il caso critico calcolato dal MODELLO CORRENTE
+        probs = modello_corrente.predict_proba(X_test)
+
+        # Ignoro i pezzi perfetti
+        idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
+        probs_solo_difetti = probs.copy()
+        probs_solo_difetti[:, idx_nessun_difetto] = 0.0
+
+        # Cerco la probabilità massima di difetto per ogni pezzo
+        max_probs = np.max(probs_solo_difetti, axis=1)
+
+        # Trovo tutti gli indici dei pezzi che hanno un difetto evidente (probabilità > 50%)
+        indici_difettosi = np.where(max_probs > 0.5)[0]
+
+        # Controllo che ci sia almeno un pezzo difettoso
+        if len(indici_difettosi) > 0:
+            worst_case_idx = np.random.choice(indici_difettosi)
+        else:
+            worst_case_idx = np.argmax(max_probs)
+
+        # Scalo il valore trovato
+        riga_scalata = X_test.iloc[worst_case_idx].values.reshape(1, -1)
+        riga_reale = scaler.inverse_transform(riga_scalata)
+        caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
+
+        difetto_previsto_idx = np.argmax(probs[worst_case_idx])
+        difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
+        prob_iniziale = probs[worst_case_idx][difetto_previsto_idx]
+
+        print(f"\nCASO IN ESAME (Riga {worst_case_idx}):")
+        print(f"Difetto Rilevato: {difetto_nome} (Probabilità: {prob_iniziale:.2%})")
+        print("Parametri Attuali (Reali):")
+        print(f"- Temperatura: {caso_reale['Rolling_Temp_C']:.2f} °C")
+        print(f"- Velocità:    {caso_reale['Roller_Speed_m_sec']:.2f} m/s")
+        print(f"- Pressione:   {caso_reale['Pressure_Bar']:.2f} Bar")
+
+        cols = X_test.columns.tolist()
+        idx_temp = cols.index('Rolling_Temp_C')
+        idx_speed = cols.index('Roller_Speed_m_sec')
+        idx_press = cols.index('Pressure_Bar')
+
+        # Funzione per l'ottimizzatore (usa dinamicamente il modello_corrente)
+# Funzione per l'ottimizzatore (usa dinamicamente il modello_corrente)
+        def objective_function(x_new):
+            row_simulation = caso_reale.values.copy() 
+            row_simulation[idx_temp] = x_new[0]         
+            row_simulation[idx_speed] = x_new[1]        
+            row_simulation[idx_press] = x_new[2]        
+            
+            row_df = pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns)
+            row_scaled = scaler.transform(row_df)
+            
+            # 1. Calcolo la probabilità del difetto
+            prediction = modello_corrente.predict_proba(row_scaled)
+            prob_difetto = prediction[0][difetto_previsto_idx]
+
+            # 2. Calcolo la penalità per l'eccessiva variazione dai parametri reali
+            # Usiamo la variazione percentuale al quadrato per avere numeri gestibili
+            penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
+            penalita_speed = ((x_new[1] - caso_reale['Roller_Speed_m_sec']) / caso_reale['Roller_Speed_m_sec'])**2
+            penalita_press = ((x_new[2] - caso_reale['Pressure_Bar']) / caso_reale['Pressure_Bar'])**2
+            
+            somma_penalita = penalita_temp + penalita_speed + penalita_press
+
+            # 3. Parametro Lambda: quanto "costa" muovere i parametri? 
+            # Più è alto, più l'ottimizzatore cercherà valori vicini a quelli di partenza.
+            # (Puoi variare questo 0.5 per vedere come cambia il comportamento)
+            lambda_peso = 0.5 
+
+            # L'ottimizzatore ora cerca un compromesso tra probabilità zero e parametri stabili
+            return prob_difetto + (lambda_peso * somma_penalita)
+
+        # Imposto i limiti fisici per l'impianto
+        bounds = [(800, 1000), (9, 15), (150, 300)]
+
+       # print("\nAvvio ottimizzazione matematica (Metodo: Powell)...")
+        #x0 = [caso_reale['Rolling_Temp_C'], 
+         #     caso_reale['Roller_Speed_m_sec'], 
+          #    caso_reale['Pressure_Bar']]
+
+        # Avvio ottimizzazione matematica...
+        # Modifica per garantire che il punto di partenza sia dentro i limiti dell'impianto
+        temp_start = max(800, min(1000, caso_reale['Rolling_Temp_C']))
+        speed_start = max(9, min(15, caso_reale['Roller_Speed_m_sec']))
+        press_start = max(150, min(300, caso_reale['Pressure_Bar']))
+
+        x0 = [temp_start, speed_start, press_start]
+
+        # Esecuzione dell'ottimizzazione
+        result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
+
+        if result.success:
+            new_temp, new_speed, new_press = result.x
+            #new_prob = result.fun
+            # Ricalcolo la probabilità pura per la stampa a video (senza la penalità)
+            row_finale = caso_reale.values.copy()
+            row_finale[idx_temp], row_finale[idx_speed], row_finale[idx_press] = new_temp, new_speed, new_press
+            row_df_fin = pd.DataFrame(row_finale.reshape(1, -1), columns=X_test.columns)
+            new_prob = modello_corrente.predict_proba(scaler.transform(row_df_fin))[0][difetto_previsto_idx]
+            
+            print(f"\n--- PRESCRIZIONE OPERATIVA ({nome_modello}) ---")
+            print(f"Per ridurre il rischio '{difetto_nome}':")
+            print(f"1. Temperatura: {new_temp:.2f} °C (era {x0[0]:.2f})")
+            print(f"2. Velocità:    {new_speed:.2f} m/s (era {x0[1]:.2f})")
+            print(f"3. Pressione:   {new_press:.2f} Bar (era {x0[2]:.2f})")
+            print(f"\nRischio ridotto dal {prob_iniziale:.2%} al {new_prob:.2%}")
+        else:
+            print("Ottimizzazione fallita:", result.message)
+
 #endregion
-
-
