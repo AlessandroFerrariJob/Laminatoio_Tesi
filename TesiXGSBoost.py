@@ -82,7 +82,7 @@ df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 
 # Definisco i numeri possibili (da 0 a 7) e la probabilità
 valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
-probabilita = [0.9, 0.02, 0.02, 0.01, 0.01, 0.01, 0.015, 0.015]
+probabilita = [0.8, 0.03, 0.03, 0.02, 0.02, 0.02, 0.04, 0.04]
 
 
 #  Aggiungo le colonne base di temperatura velocità e pressione
@@ -93,65 +93,87 @@ df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=n_rows)
 df['Defects'] = np.random.choice(valori_possibili, size=n_rows, p=probabilita)
 
 # 'No_Defects'  - 1 'Pastry', 2 'Z_Scratch', 3 'K_Scratch', 4 'Stains',5 'Dirtiness', 6'Bumps', 7 'Other_Faults' 
-#difetto di sfogliatura, superificiale e altro diminuisco la temperatura (Pastry,Stains,Other_Faults)
-mask_defect = (df['Defects'] == 1) | (df['Defects'] == 4)| (df['Defects'] == 7)
+
+#difetto di sfogliatura aumento la temperatura (Pastry)
+mask_defect = (df['Defects'] == 1) 
+df.loc[mask_defect, 'Rolling_Temp_C'] += np.random.uniform(50, 100, size=mask_defect.sum())
+
+#difetto di  diminuisco la temperatura (Stains)
+mask_defect =  (df['Defects'] == 4)
 df.loc[mask_defect, 'Rolling_Temp_C'] -= np.random.uniform(50, 100, size=mask_defect.sum())
 
-#difetto di graffi e altro aumento la velocità (Z_Scratch,K_Scratch,Other_Faults)
-mask_defect = (df['Defects'] == 3) | (df['Defects'] == 4) | (df['Defects'] == 7)
+#difetto di altro diminuisco la temperatura e aumento la velocità (Other_Faults)
+mask_defect =  (df['Defects'] == 7)
+df.loc[mask_defect, 'Rolling_Temp_C'] -= np.random.uniform(50, 100, size=mask_defect.sum())
+df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(1, 3, size=mask_defect.sum())
+
+#difetto di graffi e altro aumento la velocità (Z_Scratch)
+mask_defect = (df['Defects'] == 3) 
 df.loc[mask_defect, 'Roller_Speed_m_sec'] += np.random.uniform(3, 6, size=mask_defect.sum())
 
-#difetto sporco o irregolarità aumento la pressione(Bumps,Dirtiness)
-mask_defect = (df['Defects'] == 5) | (df['Defects'] == 6)
+#difetto di graffi diminuisco la velocità (K_Scratch)
+mask_defect =  (df['Defects'] == 4)
+df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(3, 6, size=mask_defect.sum())
+
+#difetto irregolarità aumento la pressione(Bumps)
+mask_defect = (df['Defects'] == 5) 
 df.loc[mask_defect, 'Pressure_Bar'] += np.random.uniform(40, 80, size=mask_defect.sum())
+
+#difetto sporco diminuisco la pressione(Dirtiness)
+mask_defect = (df['Defects'] == 6)
+df.loc[mask_defect, 'Pressure_Bar'] -= np.random.uniform(40, 80, size=mask_defect.sum())
 
 #Salvo il file per diagnostica
 df.to_excel(f"{folder_export}/01_Step1_Dati_Aumentati.xlsx", index=False)
 print("--- STEP 1 {n_rows} righe trovate. Variabili simulate aggiunte.")
+
+print("\n--- CHECK: FIRME FISICHE DEI DIFETTI (Medie) ---")
+# Raggruppo per difetto e calcolo la media dei 3 parametri fisici
+tabella_medie = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
+print(tabella_medie)
+
+
 # endregion
 
-#step 2 alternativo
 
-df.to_excel(f"{folder_export}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
 
-X = df
-fault_columns = ['Pastry', 'Z_Scratch', 'K_Scratch', 'Stains', 'Dirtiness', 'Bumps', 'Other_Faults']
-y_names = df[fault_columns].idxmax(axis=1)
-mask_nessun_difetto = df[fault_columns].sum(axis=1) == 0
-y_names.loc[mask_nessun_difetto] = 'No_Defects'
+
+
+
+# region STEP 2: Preparazione Target e Features
+print("\n--- STEP 2: Preparazione Target e Features ---")
+
+# 1. Separo le feature (X) dal target (y)
+# Rimuovo la colonna 'Defects' da X per evitare il data leakage nell'addestramento
+X = df.drop(columns=['Defects'])
+
+# 2. Mappiamo i numeri generati ai nomi reali dei difetti per mantenere 
+# la perfetta compatibilità e leggibilità negli STEP 5 e 6
+mappa_difetti = {
+    0: 'No_Defects',
+    1: 'Pastry',
+    2: 'Z_Scratch',
+    3: 'K_Scratch',
+    4: 'Stains',
+    5: 'Dirtiness',
+    6: 'Bumps',
+    7: 'Other_Faults'
+}
+
+# Creo una serie testuale usando il dizionario
+y_names = df['Defects'].map(mappa_difetti)
+
+# 3. Inizializzo il LabelEncoder esattamente come se lo aspetta il resto del codice
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y_names)
 
+# Salvataggio file per diagnostica (così hai il check dei dati prima dello split)
+df_step2 = X.copy()
+df_step2['Difetto_Target_Numerico'] = y_encoded
+df_step2.to_excel(f"{folder_export}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
 
-# #Tolgo le 7 colonne dei difetti e ne metto una numerica con il numero di difetto 
-# # region STEP 2 
-# print("\n--- STEP 2: Sistemazione colonna difetti ---")
-
-# # Nome delle colonne da cancellare
-# fault_columns = ['Pastry', 'Z_Scratch', 'K_Scratch', 'Stains', 'Dirtiness', 'Bumps', 'Other_Faults']
-
-# #Cancello le 7 colonne dei difetti 
-# X = df.drop(columns=fault_columns)
-
-# #Metto il nome dei difetti nell'array y_names
-# y_names = df[fault_columns].idxmax(axis=1)
-
-# # Assegno l'etichetta "Nessun_Difetto" alle righe senza difetto
-# mask_nessun_difetto = df[fault_columns].sum(axis=1) == 0
-# y_names.loc[mask_nessun_difetto] = 'No_Defects'
-
-# #Metto i numeri da 0 a  n al posto del nome dei difetti 
-# label_encoder = LabelEncoder()
-# y_encoded = label_encoder.fit_transform(y_names)
-
-# #Salvataggio file per diagnostica
-# df_step2 = X.copy()
-# df_step2['Difetto_Target_Numerico6'] = y_encoded
-# df_step2.to_excel(f"{folder_export}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
-
-# print(f"Dataset pronto. Feature: {X.shape[1]}, Campioni: {X.shape[0]}")
-
-# # endregion
+print(f"Dataset pronto per lo split. Feature: {X.shape[1]}, Campioni: {X.shape[0]}")
+# endregion
 
 
 #Divido i dati in test e train
@@ -422,13 +444,13 @@ if not SKIP_STEP5:
     y_pred_xgb = model.predict(X_test)
     print("\n--- METRICHE XGBOOST ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_xgb):.2%}")
-    print(classification_report(y_test, y_pred_xgb, target_names=target_names))
+    print(classification_report(y_test, y_pred_xgb, target_names=target_names, zero_division=0))
 
     # 2. Valutazione MLP (Rete Neurale)
     y_pred_mlp = model_mlp.predict(X_test)
     print("\n--- METRICHE PERCETTRONE MULTISTRATO (MLP) ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
-    print(classification_report(y_test, y_pred_mlp, target_names=target_names))
+    print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
 #endregion
 
 
