@@ -1,0 +1,11 @@
+=== REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===
+
+Barre curate in sicurezza (<5%) da XGBoost: 97/100
+Barre curate in sicurezza (<5%) da MLP:     100/100
+Variazione media Temperatura XGBoost:       27.13 °C
+Variazione media Temperatura MLP:           90.66 °C
+Variazione media Pressione XGBoost:       13.60 bar
+Variazione media Pressione MLP:           7.34 bar
+Variazione media Velocità XGBoost:       1.26 m/s
+Variazione media Velocità MLP:           0.87 m/s
+Vincitore Globale:                          MLP (Percettrone Multistrato)

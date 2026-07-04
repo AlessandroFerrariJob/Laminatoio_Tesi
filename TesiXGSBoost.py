@@ -60,6 +60,7 @@ folder_export = "export_dati"
 #Parametri di debug
 SKIP_STEP5 = False
 SKIP_STEP6 = False
+SKIP_STEP7 = False
 PRINT_GRAPH = False  #Visualizzo il grafico dell'errore
 
 # endregion
@@ -81,11 +82,11 @@ N_RIGHE_TARGET = 10000
 df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 
 # Definisco i numeri possibili (da 0 a 7) e la probabilità
-#valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
-#probabilita = [0.8, 0.03, 0.03, 0.02, 0.02, 0.02, 0.04, 0.04]
+valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
+probabilita = [0.8, 0.03, 0.03, 0.02, 0.02, 0.02, 0.04, 0.04]
 
-valori_possibili = [0, 1, 2, 3, 4, 5, 6,7]
-probabilita = [0.8, 0.03, 0.03, 0.02, 0.04, 0.04, 0.03, 0.01]
+#valori_possibili = [0, 1, 2, 3, 4, 5, 6,7]
+#probabilita = [0.8, 0.03, 0.03, 0.02, 0.04, 0.04, 0.03, 0.01]
 
 
 
@@ -129,19 +130,13 @@ df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(1, 3, size=mask_d
 
 #Salvo il file per diagnostica
 df.to_excel(f"{folder_export}/01_Step1_Dati_Aumentati.xlsx", index=False)
-print("--- STEP 1 {n_rows} righe trovate. Variabili simulate aggiunte.")
-
-print("\n--- CHECK: FIRME FISICHE DEI DIFETTI (Medie) ---")
+print("\n --- STEP 1  10000 righe generate. Variabili simulate corrette.")
 # Raggruppo per difetto e calcolo la media dei 3 parametri fisici
 tabella_medie = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
 print(tabella_medie)
 
 
 # endregion
-
-
-
-
 
 
 # region STEP 2: Preparazione Target e Features
@@ -221,7 +216,7 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 #Training
 #region STEP 4A  XGBoost
 
-print("\n--- STEP 4: Ricerca Iperparametri XGBoost  ---")
+print("\n--- STEP 4A: Ricerca Iperparametri XGBoost  ---")
 
 # Definisco il modello base XGBoost
 xgb_base = XGBClassifier(
@@ -280,7 +275,7 @@ print(tabella_risultati.head(5).to_string(index=False))
 
 # Salvo la tabella in Excel (utilissima da incollare nelle slide/tesi)
 tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
-print(f"\nTabella completa salvata in: {folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx")
+#print(f"\nTabella completa salvata in: {folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx")
 
 # 6. Salvo il modello migliore per passarlo allo STEP 5 e STEP 6
 model = grid_search.best_estimator_
@@ -404,7 +399,7 @@ print(tabella_risultati_mlp.head(5).to_string(index=False))
 
 # Salvo la tabella in Excel per il confronto diretto con XGBoost
 tabella_risultati_mlp.to_excel(f"{folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx", index=False)
-print(f"\nTabella MLP salvata in: {folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx")
+#print(f"\nTabella MLP salvata in: {folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx")
 
 # 5. ESTRAZIONE PARAMETRI OTTimali E ADDESTRAMENTO FINALE
 migliori_parametri_mlp = grid_search_mlp.best_params_
@@ -457,117 +452,184 @@ if not SKIP_STEP5:
     print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
 #endregion
 
-
-# Cerco un valore con difetto e vedo quali sono i parametri da modificare 
-#region STEP 6
+#region STEP 6: Simulazione Prescrittiva su Larga Scala (100 Barre)
 if not SKIP_STEP6:
-    print("\n--- STEP 6: Analisi Prescrittiva Comparativa ---")
+    print("\n--- STEP 6: Simulazione Prescrittiva Massiva (100 Barre) ---")
 
-    # 1. FASE DI ISPEZIONE (Fuori dal ciclo)
-    # Usiamo il modello XGBoost (model) come riferimento per trovare un pezzo critico
+    NUM_TEST = 100
+    risultati_simulazione = []
+
+    # 1. Trovo tutti i potenziali casi critici (usando XGBoost come "ispettore" base)
     probs_riferimento = model.predict_proba(X_test)
-
-    # Ignoro i pezzi perfetti per trovare dove l'impianto sta fallendo
     idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
+    
     probs_solo_difetti = probs_riferimento.copy()
     probs_solo_difetti[:, idx_nessun_difetto] = 0.0
 
     max_probs = np.max(probs_solo_difetti, axis=1)
     indici_difettosi = np.where(max_probs > 0.5)[0]
 
-    if len(indici_difettosi) > 0:
-        worst_case_idx = np.random.choice(indici_difettosi)
-    else:
-        worst_case_idx = np.argmax(max_probs)
+    # Seleziono 100 indici casuali tra quelli difettosi
+    # Nota: se ci sono meno di 100 difetti, permettiamo la ripetizione (replace=True)
+    indici_test = np.random.choice(indici_difettosi, size=NUM_TEST, replace=len(indici_difettosi) < NUM_TEST)
 
-    # Blocco i dati della bramma di acciaio selezionata
-    riga_scalata = X_test.iloc[worst_case_idx].values.reshape(1, -1)
-    riga_reale = scaler.inverse_transform(riga_scalata)
-    caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
-
-    # Identifico qual è il difetto specifico da risolvere
-    difetto_previsto_idx = np.argmax(probs_riferimento[worst_case_idx])
-    difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
-
-    # Stampo a video i dati del pezzo che verrà analizzato da entrambi i modelli
-    print(f"\n{'*'*60}")
-    print(f" CASO CRITICO SELEZIONATO (Riga {worst_case_idx})")
-    print(f" Difetto target da risolvere: {difetto_nome}")
-    print(" Parametri Iniziali (Reali):")
-    print(f" - Temperatura: {caso_reale['Rolling_Temp_C']:.2f} °C")
-    print(f" - Velocità:    {caso_reale['Roller_Speed_m_sec']:.2f} m/s")
-    print(f" - Pressione:   {caso_reale['Pressure_Bar']:.2f} Bar")
-    print(f"{'*'*60}")
-
-    # Memorizzo gli indici delle colonne da modificare
     cols = X_test.columns.tolist()
     idx_temp = cols.index('Rolling_Temp_C')
     idx_speed = cols.index('Roller_Speed_m_sec')
     idx_press = cols.index('Pressure_Bar')
 
-    # 2. FASE DI OTTIMIZZAZIONE (Dentro il ciclo)
     modelli_da_testare = [
         ("XGBoost", model),
-        ("Percettrone Multistrato (MLP)", model_mlp)
+        ("MLP", model_mlp)
     ]
 
-    for nome_modello, modello_corrente in modelli_da_testare:
-        
-        print(f"\n{'='*50}")
-        print(f" INIZIO OTTIMIZZAZIONE CON: {nome_modello}")
-        print(f"{'='*50}")
+    print(f"Avvio ottimizzazione per {NUM_TEST} barre su entrambi i modelli. Attendere...")
 
-        # Calcolo quanto rischio assegna QUESTO specifico modello alla riga selezionata
-        probs_correnti = modello_corrente.predict_proba(riga_scalata)
-        prob_iniziale = probs_correnti[0][difetto_previsto_idx]
-        
-        print(f"Il modello stima un rischio di '{difetto_nome}' pari al {prob_iniziale:.2%}")
+    # 2. Eseguo il ciclo sui 100 casi
+    for i, idx_caso in enumerate(indici_test):
+        # Avanzamento visivo a blocchi di 10 per non bloccare lo schermo
+        if (i+1) % 10 == 0:
+            print(f"Progresso: {i+1}/{NUM_TEST} barre completate...")
 
-        def objective_function(x_new):
-            row_simulation = caso_reale.values.copy() 
-            row_simulation[idx_temp] = x_new[0]         
-            row_simulation[idx_speed] = x_new[1]        
-            row_simulation[idx_press] = x_new[2]        
-            
-            row_df = pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns)
-            row_scaled = scaler.transform(row_df)
-            
-            prediction = modello_corrente.predict_proba(row_scaled)
-            prob_difetto = prediction[0][difetto_previsto_idx]
+        # Estrazione dati della barra corrente
+        riga_scalata = X_test.iloc[idx_caso].values.reshape(1, -1)
+        riga_reale = scaler.inverse_transform(riga_scalata)
+        caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
 
-            penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
-            penalita_speed = ((x_new[1] - caso_reale['Roller_Speed_m_sec']) / caso_reale['Roller_Speed_m_sec'])**2
-            penalita_press = ((x_new[2] - caso_reale['Pressure_Bar']) / caso_reale['Pressure_Bar'])**2
-            
-            somma_penalita = penalita_temp + penalita_speed + penalita_press
-            lambda_peso = 0.5 
+        difetto_previsto_idx = np.argmax(probs_riferimento[idx_caso])
+        difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
 
-            return prob_difetto + (lambda_peso * somma_penalita)
-
-        bounds = [(800, 1100), (9, 15), (150, 300)]
-
-        temp_start = max(800, min(1100, caso_reale['Rolling_Temp_C']))
+        temp_start = max(800, min(1000, caso_reale['Rolling_Temp_C']))
         speed_start = max(9, min(15, caso_reale['Roller_Speed_m_sec']))
         press_start = max(150, min(300, caso_reale['Pressure_Bar']))
         x0 = [temp_start, speed_start, press_start]
+        bounds = [(800, 1000), (9, 15), (150, 300)]
 
-        result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
+        # Variabili per tracciare chi vince su questa barra
+        risultato_barra = {
+            'Id_Barra': i+1,
+            'Difetto': difetto_nome,
+            'Temp_Iniziale': caso_reale['Rolling_Temp_C'],
+            'Speed_Iniziale': caso_reale['Roller_Speed_m_sec'],
+            'Press_Iniziale': caso_reale['Pressure_Bar']
+        }
 
-        if result.success:
-            new_temp, new_speed, new_press = result.x
+        # 3. Testo entrambi i modelli sulla stessa barra
+        for nome_modello, modello_corrente in modelli_da_testare:
             
-            row_finale = caso_reale.values.copy()
-            row_finale[idx_temp], row_finale[idx_speed], row_finale[idx_press] = new_temp, new_speed, new_press
-            row_df_fin = pd.DataFrame(row_finale.reshape(1, -1), columns=X_test.columns)
-            new_prob = modello_corrente.predict_proba(scaler.transform(row_df_fin))[0][difetto_previsto_idx]
+            prob_iniziale = modello_corrente.predict_proba(riga_scalata)[0][difetto_previsto_idx]
             
-            print(f"\n--- PRESCRIZIONE OPERATIVA ({nome_modello}) ---")
-            print(f"Per ridurre il rischio '{difetto_nome}':")
-            print(f"1. Temperatura: {new_temp:.2f} °C (era {x0[0]:.2f})")
-            print(f"2. Velocità:    {new_speed:.2f} m/s (era {x0[1]:.2f})")
-            print(f"3. Pressione:   {new_press:.2f} Bar (era {x0[2]:.2f})")
-            print(f"\nRischio ridotto dal {prob_iniziale:.2%} al {new_prob:.2%}")
-        else:
-            print("Ottimizzazione fallita:", result.message)
+            def objective_function(x_new):
+                row_simulation = caso_reale.values.copy() 
+                row_simulation[idx_temp] = x_new[0]         
+                row_simulation[idx_speed] = x_new[1]        
+                row_simulation[idx_press] = x_new[2]        
+                
+                row_scaled = scaler.transform(pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns))
+                prob_difetto = modello_corrente.predict_proba(row_scaled)[0][difetto_previsto_idx]
+
+                penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
+                penalita_speed = ((x_new[1] - caso_reale['Roller_Speed_m_sec']) / caso_reale['Roller_Speed_m_sec'])**2
+                penalita_press = ((x_new[2] - caso_reale['Pressure_Bar']) / caso_reale['Pressure_Bar'])**2
+                
+                return prob_difetto + (0.5 * (penalita_temp + penalita_speed + penalita_press))
+
+            result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
+
+            # Salvo i risultati specifici del modello
+            risultato_barra[f'Prob_Iniziale_{nome_modello}'] = prob_iniziale
+            
+            if result.success:
+                row_finale = caso_reale.values.copy()
+                row_finale[idx_temp], row_finale[idx_speed], row_finale[idx_press] = result.x
+                row_df_fin = pd.DataFrame(row_finale.reshape(1, -1), columns=X_test.columns)
+                new_prob = modello_corrente.predict_proba(scaler.transform(row_df_fin))[0][difetto_previsto_idx]
+                
+                risultato_barra[f'Prob_Finale_{nome_modello}'] = new_prob
+                risultato_barra[f'Temp_Finale_{nome_modello}'] = result.x[0]
+                risultato_barra[f'Press_Finale_{nome_modello}'] = result.x[2]
+                risultato_barra[f'Vel_Finale_{nome_modello}'] = result.x[1]
+                risultato_barra[f'Delta_Temp_{nome_modello}'] = abs(result.x[0] - caso_reale['Rolling_Temp_C'])
+                risultato_barra[f'Delta_Press_{nome_modello}'] = abs(result.x[2] - caso_reale['Pressure_Bar'])
+                risultato_barra[f'Delta_Vel_{nome_modello}'] = abs(result.x[1] - caso_reale['Roller_Speed_m_sec'])
+                risultato_barra[f'Successo_{nome_modello}'] = True
+            else:
+                risultato_barra[f'Prob_Finale_{nome_modello}'] = prob_iniziale
+                risultato_barra[f'Temp_Finale_{nome_modello}'] = 0
+                risultato_barra[f'Press_Finale_{nome_modello}'] = 0
+                risultato_barra[f'Vel_Finale_{nome_modello}'] = 0
+                risultato_barra[f'Delta_Temp_{nome_modello}'] = 0
+                risultato_barra[f'Delta_Press_{nome_modello}'] = 0
+                risultato_barra[f'Delta_Vel_{nome_modello}'] = 0
+                risultato_barra[f'Successo_{nome_modello}'] = False
+
+        # Aggiungo la barra completata alla lista dei risultati
+        risultati_simulazione.append(risultato_barra)
+
+    # 4. Converto tutto in un DataFrame e lo salvo in Excel
+    df_simulazione = pd.DataFrame(risultati_simulazione)
+    df_simulazione.to_excel(f"{folder_export}/06_Step6_Simulazione_Massiva_100.xlsx", index=False)
+    print(f"\nSimulazione completata. Dati grezzi salvati in '{folder_export}/06_Step6_Simulazione_Massiva_100.xlsx'")
 
 #endregion
+
+#region STEP 7: Report Statistico della Simulazione
+if not SKIP_STEP7:
+    print("\n=== STEP 7: REPORT STATISTICO SULL'ANALISI PRESCRITTIVA ===")
+
+    # Calcolo quante probabilità residue ci sono (più è bassa, più il modello ha curato bene il difetto)
+    media_prob_finale_xgb = df_simulazione['Prob_Finale_XGBoost'].mean()
+    media_prob_finale_mlp = df_simulazione['Prob_Finale_MLP'].mean()
+
+    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di temperatura)
+    media_sforzo_temp_xgb = df_simulazione['Delta_Temp_XGBoost'].mean()
+    media_sforzo_temp_mlp = df_simulazione['Delta_Temp_MLP'].mean()
+
+    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di pressine)
+    media_sforzo_press_xgb = df_simulazione['Delta_Press_XGBoost'].mean()
+    media_sforzo_press_mlp = df_simulazione['Delta_Press_MLP'].mean()
+
+    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di velocità)
+    media_sforzo_vel_xgb = df_simulazione['Delta_Vel_XGBoost'].mean()
+    media_sforzo_vel_mlp = df_simulazione['Delta_Vel_MLP'].mean()
+
+    # Calcolo quante volte il modello è riuscito a portare il rischio sotto una soglia di sicurezza (es. < 5%)
+    sicurezza_xgb = (df_simulazione['Prob_Finale_XGBoost'] < 0.05).sum()
+    sicurezza_mlp = (df_simulazione['Prob_Finale_MLP'] < 0.05).sum()
+
+    # Stampo il verdetto finale
+    print("\n1. CAPACITÀ DI RISOLUZIONE DEL DIFETTO:")
+    print(f" - Barre curate in sicurezza (<5% rischio) da XGBoost: {sicurezza_xgb}/{NUM_TEST}")
+    print(f" - Barre curate in sicurezza (<5% rischio) da MLP:     {sicurezza_mlp}/{NUM_TEST}")
+    print(f" - Rischio medio residuo dopo prescrizione XGBoost:      {media_prob_finale_xgb:.2%}")
+    print(f" - Rischio medio residuo dopo prescrizione MLP:          {media_prob_finale_mlp:.2%}")
+
+    print("\n2. VARIAZIONI :")
+    print(f" - Variazione media di Temperatura richiesta da XGBoost: {media_sforzo_temp_xgb:.2f} °C")
+    print(f" - Variazione media di Temperatura richiesta da MLP:     {media_sforzo_temp_mlp:.2f} °C")
+    print(f" - Variazione media di Pressione richiesta da XGBoost: {media_sforzo_press_xgb:.2f} bar")
+    print(f" - Variazione media di Pressione richiesta da MLP:     {media_sforzo_press_mlp:.2f} bar")
+    print(f" - Variazione media di Velocità richiesta da XGBoost: {media_sforzo_vel_xgb:.2f} m/s")
+    print(f" - Variazione media di Velocità richiesta da MLP:     {media_sforzo_vel_mlp:.2f} m/s")
+
+    # Logica per dichiarare il vincitore
+    if (media_prob_finale_xgb < media_prob_finale_mlp):
+        vincitore = "XGBoost"
+    else:
+        vincitore = "MLP (Percettrone Multistrato)"
+    print(f"\n VERDETTO DELLA SIMULAZIONE: {vincitore} è il modello più efficace nella prescrizione!")
+
+    # Salvataggio di questo report in un file di testo pulito
+    with open(f"{folder_export}/07_Step7_Report_Statistico.txt", "w") as file:
+        file.write("=== REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===\n\n")
+        file.write(f"Barre curate in sicurezza (<5%) da XGBoost: {sicurezza_xgb}/{NUM_TEST}\n")
+        file.write(f"Barre curate in sicurezza (<5%) da MLP:     {sicurezza_mlp}/{NUM_TEST}\n")
+        file.write(f"Variazione media Temperatura XGBoost:       {media_sforzo_temp_xgb:.2f} °C\n")
+        file.write(f"Variazione media Temperatura MLP:           {media_sforzo_temp_mlp:.2f} °C\n")
+        file.write(f"Variazione media Pressione XGBoost:       {media_sforzo_press_xgb:.2f} bar\n")
+        file.write(f"Variazione media Pressione MLP:           {media_sforzo_press_mlp:.2f} bar\n")
+        file.write(f"Variazione media Velocità XGBoost:       {media_sforzo_vel_xgb:.2f} m/s\n")
+        file.write(f"Variazione media Velocità MLP:           {media_sforzo_vel_mlp:.2f} m/s\n")
+        file.write(f"Vincitore Globale:                          {vincitore}\n")
+#endregion
+
