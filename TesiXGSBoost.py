@@ -73,7 +73,7 @@ os.makedirs(folder_export, exist_ok=True)
 # endregion
 
 
-#Leggo il file excel, aggiungo i campi di temperatura velocità e pressione modificati in base al difetto
+#Creo un nuovo file da zero aggiungendo i campi di temperatura velocità e pressione modificati in base al difetto
 # region STEP 1 
 
 N_RIGHE_TARGET = 10000
@@ -206,6 +206,7 @@ X_test = pd.DataFrame(X_test_scaled, columns=X.columns)
 
 # Salvo i dati scalati 
 X_train.to_excel(f"{folder_export}/03_Step3_Train_Scalato.xlsx", index=False)
+X_val.to_excel(f"{folder_export}/03_Step3_Val_Scalato.xlsx", index=False)
 X_test.to_excel(f"{folder_export}/03_Step3_Test_Scalato.xlsx", index=False)
 
 print("\n--- STEP 3: Dati divisi e scalati: ")
@@ -213,7 +214,7 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 #endregion
 
 
-#Training
+
 #region STEP 4A  XGBoost
 
 print("\n--- STEP 4A: Ricerca Iperparametri XGBoost  ---")
@@ -226,7 +227,6 @@ xgb_base = XGBClassifier(
 )
 
 # Definisco la "griglia" dei parametri da testare
-# ---------------    VERIFICARE SE CAMBIARE I VALORI     ----------------------------------------
 param_grid = {
     'n_estimators': [100, 200, 300],
     'max_depth': [3, 6, 9],
