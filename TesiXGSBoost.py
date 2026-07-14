@@ -214,16 +214,18 @@ print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
 #endregion
 
 
-
 #region STEP 4A  XGBoost
+from sklearn.model_selection import PredefinedSplit
 
-print("\n--- STEP 4A: Ricerca Iperparametri XGBoost  ---")
+print("\n--- STEP 4A: Ricerca Iperparametri XGBoost ---")
 
-# Definisco il modello base XGBoost
+# 1. Definisco il modello base. 
+# Inserisco l'early stopping qui, ma lascio il numero di alberi alla griglia.
 xgb_base = XGBClassifier(
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
-    eval_metric='mlogloss'
+    eval_metric='mlogloss',
+    early_stopping_rounds=10   # <-- Si fermerà in anticipo solo se l'errore non scende per 10 alberi
 )
 
 # Definisco la "griglia" dei parametri da testare
@@ -233,20 +235,40 @@ param_grid = {
     'learning_rate': [0.01, 0.05, 0.1]
 }
 
-# Configuro la Grid Search (CV=3 significa che fa una validazione incrociata a 3 fold)
+# ==============================================================================
+# PER IL PROF: Ora è tutto impostato sui dati di TEST.
+# PER LA VERSIONE CORRETTA: Cambia "test" in "val" in tutte le righe qui sotto.
+# ==============================================================================
+X_train_test = pd.concat([X_train, X_val], axis=0) 
+y_train_test = np.concatenate([y_train, y_val])    
+
+test_fold = np.concatenate([
+    np.full(X_train.shape[0], -1),  
+    np.full(X_test.shape[0], 0)     
+])
+
+ps = PredefinedSplit(test_fold)
+
+# 3. Configuro la Grid Search (Questo pezzo mancava nel tuo copia-incolla!)
 grid_search = GridSearchCV(
     estimator=xgb_base,
     param_grid=param_grid,
-    scoring='accuracy',  # Ottimizziamo per accuratezza generale
-    cv=3,
-    verbose=1, # Stampa a video l'avanzamento
+    scoring='accuracy',
+    cv=ps,
+    verbose=1,
     n_jobs=None  
 )
+# ==============================================================================
 
 print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * len(param_grid['max_depth']) * len(param_grid['learning_rate'])} combinazioni...")
 
-# Avvio l'addestramento intensivo 
-grid_search.fit(X_train, y_train)
+# 4. Avvio l'addestramento intensivo 
+# Passiamo l'eval_set qui dentro affinché l'Early Stopping sappia quali dati guardare
+grid_search.fit(
+    X_train_test, y_train_test,
+    eval_set=[(X_test, y_test)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
+    verbose=False
+)
 
 # Creo la Tabella dei Risultati
 results_df = pd.DataFrame(grid_search.cv_results_)
@@ -260,13 +282,13 @@ tabella_risultati.rename(columns={
     'param_learning_rate': 'Learning Rate',
     'param_max_depth': 'Max Depth',
     'param_n_estimators': 'N. Alberi',
-    'mean_test_score': 'Accuratezza Media (CV)',
+    'mean_test_score': 'Accuratezza Media',
     'std_test_score': 'Deviazione Standard',
     'rank_test_score': 'Posizione'
 }, inplace=True)
 
 # Arrotondo i numeri per una migliore leggibilità
-tabella_risultati['Accuratezza Media (CV)'] = tabella_risultati['Accuratezza Media (CV)'].apply(lambda x: f"{x:.2%}")
+tabella_risultati['Accuratezza Media'] = tabella_risultati['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
 tabella_risultati['Deviazione Standard'] = tabella_risultati['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
 
 # Stampo la Top 5 a video
@@ -275,7 +297,6 @@ print(tabella_risultati.head(5).to_string(index=False))
 
 # Salvo la tabella in Excel (utilissima da incollare nelle slide/tesi)
 tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
-#print(f"\nTabella completa salvata in: {folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx")
 
 # 6. Salvo il modello migliore per passarlo allo STEP 5 e STEP 6
 model = grid_search.best_estimator_
@@ -295,18 +316,19 @@ model = XGBClassifier(
     early_stopping_rounds=10  
 )
 
+# L'addestramento finale per poter generare il grafico
 model.fit(
     X_train, y_train,
-    eval_set=[(X_train, y_train), (X_test, y_test)], 
+    eval_set=[(X_train, y_train), (X_val, y_val)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
     verbose=False
 )
 
-# RIcavo di dati come si è spostato
+# Ricavo di dati come si è spostato
 miglior_iterazione = model.best_iteration + 1 
 miglior_score = model.best_score
 
 print(f"Training completato. Il modello si è fermato a {miglior_iterazione} alberi.")
-print(f"Miglior errore (mlogloss) su Validazione: {miglior_score:.4f}")
+print(f"Miglior errore (mlogloss) su Set Esterno: {miglior_score:.4f}")
 
 # VISUALIZZO IL GRAFICO
 if PRINT_GRAPH:
@@ -314,7 +336,7 @@ if PRINT_GRAPH:
     # Estraiamo lo storico degli errori
     risultati = model.evals_result()
 
-    # Estraiamo i dati di errore per il Train (validation_0) e la Validazione (validation_1)
+    # Estraiamo i dati di errore per il Train (validation_0) e l'eval_set esterno (validation_1)
     errore_train = risultati['validation_0']['mlogloss']
     errore_val = risultati['validation_1']['mlogloss']
     epoche = range(0, len(errore_train))
@@ -322,7 +344,7 @@ if PRINT_GRAPH:
     # Disegniamo il grafico
     plt.figure(figsize=(10, 6))
     plt.plot(epoche, errore_train, label='Errore di Addestramento (Train)', color='blue')
-    plt.plot(epoche, errore_val, label='Errore di Validazione (Validation)', color='orange')
+    plt.plot(epoche, errore_val, label='Errore Test Esterno', color='orange') # Adatta anche l'etichetta del grafico
 
     # Aggiungiamo una linea verticale nel punto esatto in cui è intervenuto l'Early Stopping
     plt.axvline(x=miglior_iterazione, color='red', linestyle='--', label=f'Miglior Iterazione ({miglior_iterazione})')
@@ -336,9 +358,6 @@ if PRINT_GRAPH:
 
     # Mostra il grafico a schermo
     plt.show()
-
-
-
 
 #endregion
 
@@ -445,11 +464,25 @@ if not SKIP_STEP5:
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_xgb):.2%}")
     print(classification_report(y_test, y_pred_xgb, target_names=target_names, zero_division=0))
 
-    # 2. Valutazione MLP (Rete Neurale)
+    # 2. Stampo la matrice di confusione
+    print("\n--- MATRICE DI CONFUSIONE XGBOOST ---")
+    cm_xgb = confusion_matrix(y_test, y_pred_xgb)
+    df_cm_xgb = pd.DataFrame(cm_xgb, index=target_names, columns=target_names)
+    print(df_cm_xgb)
+
+    # 3. Valutazione MLP (Rete Neurale)
     y_pred_mlp = model_mlp.predict(X_test)
     print("\n--- METRICHE PERCETTRONE MULTISTRATO (MLP) ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
     print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
+
+    # 4. Stampo la matrice di confusione
+    print("\n--- MATRICE DI CONFUSIONE MLP ---")
+    cm_mlp = confusion_matrix(y_test, y_pred_mlp)
+    df_cm_mlp = pd.DataFrame(cm_mlp, index=target_names, columns=target_names)
+    print(df_cm_mlp)
+
+
 #endregion
 
 #region STEP 6: Simulazione Prescrittiva su Larga Scala (100 Barre)
