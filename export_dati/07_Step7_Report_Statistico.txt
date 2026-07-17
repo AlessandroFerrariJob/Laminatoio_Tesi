@@ -3,9 +3,9 @@
 Barre curate in sicurezza (<5%) da XGBoost: 96/100
 Barre curate in sicurezza (<5%) da MLP:     100/100
 Variazione media Temperatura XGBoost:       26.42 °C
-Variazione media Temperatura MLP:           99.38 °C
+Variazione media Temperatura MLP:           103.71 °C
 Variazione media Pressione XGBoost:       15.92 bar
-Variazione media Pressione MLP:           9.09 bar
+Variazione media Pressione MLP:           8.50 bar
 Variazione media Velocità XGBoost:       1.20 m/s
-Variazione media Velocità MLP:           0.75 m/s
+Variazione media Velocità MLP:           0.74 m/s
 Vincitore Globale:                          MLP (Percettrone Multistrato)

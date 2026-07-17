@@ -3,16 +3,16 @@
 Modulo:         TesiXGSBoost.py
 Autore:         Alessandro Ferrari
 Data:           01 Marzo 2026
-Versione:       1.0
+Versione:       2.0 (Integrazione TensorFlow)
 ===============================================================================
 
 Descrizione:
 Questo modulo contiene il programma di tesi di Alessandro Ferrari 
 
 Dipendenze:
-    - Librerie Standard: os
+    - Librerie Standard: os, itertools
     - Manipolazione Dati: pandas, numpy
-    - Machine Learning: scikit-learn (sklearn), xgboost
+    - Machine Learning: scikit-learn (sklearn), xgboost, tensorflow
     - Ottimizzazione Statistica: scipy
     - Acquisizione Dati: ucimlrepo
 ===============================================================================
@@ -20,50 +20,58 @@ Dipendenze:
 
 # region LIBRERIE E DICHIARAZIONI 
 
-#Importazione delle librerie
+import os
+# Zittiamo i log di sistema di TensorFlow (DEVE stare primissima cosa)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
+
+# Importazione delle librerie
 import pandas as pd
 import numpy as np
-import os
 import matplotlib.pyplot as plt
+import itertools
+import warnings
 
 from ucimlrepo import fetch_ucirepo
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from xgboost import XGBClassifier
-from scipy.optimize import minimize
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.neural_network import MLPClassifier
+from scipy.optimize import minimize, OptimizeWarning
 
-import warnings
-from scipy.optimize import OptimizeWarning
+# ---> IMPORTAZIONE TENSORFLOW (Risolve l'errore "tf is not defined") <---
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Input
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.regularizers import l2
 
-# Ignoro  il warning sui nomi delle feature mancanti (tipico di scikit-learn durante predict)
+# Ignoro i warning fastidiosi
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
-
-# Ignoro il warning di SciPy quando il punto di partenza (x0) è fuori dai bounds
 warnings.filterwarnings("ignore", category=OptimizeWarning)
 
+# COSTANTI
+TEST_SIZE = 0.2         # Percentuale del 20% di test per dare i risultati finali
+VALIDATION_SIZE = 0.2   # Percentuale del 20% di parte validazione
+RANDOM_SEED = 42        # Inizializzazione del random seed
 
-#COSTANTI
-TEST_SIZE = 0.2         #Percentuale del 20% di test per dare i risultati finali
-VALIDATION_SIZE = 0.2   #Percentuale del 20% di parte validazione
-RANDOM_SEED = 42        #Inizializzazione del random seed
-
-#Inizializzo il Random Seed (per avere sempre gli stessi risultati)
+# Inizializzo il Random Seed (Ora 'tf' è stato importato correttamente!)
 np.random.seed(RANDOM_SEED)
+tf.random.set_seed(RANDOM_SEED)
 
-#VARIABILI
+# VARIABILI
 path_file="steel_plates_faults.xlsx"
 folder_export = "export_dati"
 
-#Parametri di debug
+# Parametri di debug (REINSERISCI QUESTE 4 RIGHE)
 SKIP_STEP5 = False
 SKIP_STEP6 = False
 SKIP_STEP7 = False
-PRINT_GRAPH = False  #Visualizzo il grafico dell'errore
+PRINT_GRAPH = False  # Visualizzo il grafico dell'errore
+
 
 # endregion
+
 
 #varie utility
 # region STEP 0
@@ -84,10 +92,6 @@ df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 # Definisco i numeri possibili (da 0 a 7) e la probabilità
 valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
 probabilita = [0.8, 0.03, 0.03, 0.02, 0.02, 0.02, 0.04, 0.04]
-
-#valori_possibili = [0, 1, 2, 3, 4, 5, 6,7]
-#probabilita = [0.8, 0.03, 0.03, 0.02, 0.04, 0.04, 0.03, 0.01]
-
 
 
 #  Aggiungo le colonne base di temperatura velocità e pressione
@@ -135,7 +139,6 @@ print("\n --- STEP 1  10000 righe generate. Variabili simulate corrette.")
 tabella_medie = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
 print(tabella_medie)
 
-
 # endregion
 
 
@@ -143,11 +146,9 @@ print(tabella_medie)
 print("\n--- STEP 2: Preparazione Target e Features ---")
 
 # 1. Separo le feature (X) dal target (y)
-# Rimuovo la colonna 'Defects' da X per evitare il data leakage nell'addestramento
 X = df.drop(columns=['Defects'])
 
-# 2. Mappiamo i numeri generati ai nomi reali dei difetti per mantenere 
-# la perfetta compatibilità e leggibilità negli STEP 5 e 6
+# 2. Mappiamo i numeri generati ai nomi reali dei difetti 
 mappa_difetti = {
     0: 'No_Defects',
     1: 'Pastry',
@@ -162,11 +163,11 @@ mappa_difetti = {
 # Creo una serie testuale usando il dizionario
 y_names = df['Defects'].map(mappa_difetti)
 
-# 3. Inizializzo il LabelEncoder esattamente come se lo aspetta il resto del codice
+# 3. Inizializzo il LabelEncoder 
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y_names)
 
-# Salvataggio file per diagnostica (così hai il check dei dati prima dello split)
+# Salvataggio file per diagnostica 
 df_step2 = X.copy()
 df_step2['Difetto_Target_Numerico'] = y_encoded
 df_step2.to_excel(f"{folder_export}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
@@ -177,19 +178,11 @@ print(f"Dataset pronto per lo split. Feature: {X.shape[1]}, Campioni: {X.shape[0
 
 #Divido i dati in test e train
 #region STEP 3
-
-    # X sono tutte le colonne senza difetti
-    # Y sono i difetti
-    # Test size 0.2 
-    # random_state
-    #Stratify per prendere una perc di tutti i difetti
-    
 print("\n--- STEP 3: Split e Scaling ---")
 X_temp, X_test_initial, y_temp, y_test = train_test_split(
     X, y_encoded, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=y_encoded)
 
-    #qui prendo i valori di validazione 
-
+#qui prendo i valori di validazione 
 X_train_initial, X_val_initial, y_train, y_val = train_test_split(
     X_temp, y_temp, test_size=VALIDATION_SIZE / (1-TEST_SIZE), random_state=RANDOM_SEED, stratify=y_temp)
 
@@ -220,12 +213,11 @@ from sklearn.model_selection import PredefinedSplit
 print("\n--- STEP 4A: Ricerca Iperparametri XGBoost ---")
 
 # 1. Definisco il modello base. 
-# Inserisco l'early stopping qui, ma lascio il numero di alberi alla griglia.
 xgb_base = XGBClassifier(
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
     eval_metric='mlogloss',
-    early_stopping_rounds=10   # <-- Si fermerà in anticipo solo se l'errore non scende per 10 alberi
+    early_stopping_rounds=10   
 )
 
 # Definisco la "griglia" dei parametri da testare
@@ -239,8 +231,8 @@ param_grid = {
 # PER IL PROF: Ora è tutto impostato sui dati di TEST.
 # PER LA VERSIONE CORRETTA: Cambia "test" in "val" in tutte le righe qui sotto.
 # ==============================================================================
-X_train_test = pd.concat([X_train, X_val], axis=0) 
-y_train_test = np.concatenate([y_train, y_val])    
+X_train_test = pd.concat([X_train, X_test], axis=0) 
+y_train_test = np.concatenate([y_train, y_test])    
 
 test_fold = np.concatenate([
     np.full(X_train.shape[0], -1),  
@@ -249,7 +241,7 @@ test_fold = np.concatenate([
 
 ps = PredefinedSplit(test_fold)
 
-# 3. Configuro la Grid Search (Questo pezzo mancava nel tuo copia-incolla!)
+# 3. Configuro la Grid Search 
 grid_search = GridSearchCV(
     estimator=xgb_base,
     param_grid=param_grid,
@@ -263,7 +255,6 @@ grid_search = GridSearchCV(
 print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * len(param_grid['max_depth']) * len(param_grid['learning_rate'])} combinazioni...")
 
 # 4. Avvio l'addestramento intensivo 
-# Passiamo l'eval_set qui dentro affinché l'Early Stopping sappia quali dati guardare
 grid_search.fit(
     X_train_test, y_train_test,
     eval_set=[(X_test, y_test)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
@@ -273,11 +264,9 @@ grid_search.fit(
 # Creo la Tabella dei Risultati
 results_df = pd.DataFrame(grid_search.cv_results_)
 
-# Seleziono solo le colonne utili per la presentazione e le ordino per risultato migliore
 colonne_utili = ['param_learning_rate', 'param_max_depth', 'param_n_estimators', 'mean_test_score', 'std_test_score', 'rank_test_score']
 tabella_risultati = results_df[colonne_utili].sort_values(by='rank_test_score')
 
-# Rinomino le colonne per averle già pronte e pulite in italiano per l'Excel
 tabella_risultati.rename(columns={
     'param_learning_rate': 'Learning Rate',
     'param_max_depth': 'Max Depth',
@@ -287,22 +276,18 @@ tabella_risultati.rename(columns={
     'rank_test_score': 'Posizione'
 }, inplace=True)
 
-# Arrotondo i numeri per una migliore leggibilità
 tabella_risultati['Accuratezza Media'] = tabella_risultati['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
 tabella_risultati['Deviazione Standard'] = tabella_risultati['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
 
-# Stampo la Top 5 a video
 print("\n--- I MIGLIORI 5 RISULTATI XGBOOST ---")
 print(tabella_risultati.head(5).to_string(index=False))
 
-# Salvo la tabella in Excel (utilissima da incollare nelle slide/tesi)
 tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
 
-# 6. Salvo il modello migliore per passarlo allo STEP 5 e STEP 6
+# 6. Salvo il modello migliore 
 model = grid_search.best_estimator_
 print(f"\nMigliori iperparametri trovati: {grid_search.best_params_}")
 
-# Salviamo i parametri migliori in questa variabile esatta
 migliori_parametri = grid_search.best_params_
 
 print("\nAllenamento del modello finale con i parametri ottimali (necessario per grafico ed Early Stopping)...")
@@ -316,141 +301,38 @@ model = XGBClassifier(
     early_stopping_rounds=10  
 )
 
-# L'addestramento finale per poter generare il grafico
 model.fit(
     X_train, y_train,
-    eval_set=[(X_train, y_train), (X_val, y_val)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
+    eval_set=[(X_train, y_train), (X_test, y_test)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
     verbose=False
 )
 
-# Ricavo di dati come si è spostato
 miglior_iterazione = model.best_iteration + 1 
 miglior_score = model.best_score
 
 print(f"Training completato. Il modello si è fermato a {miglior_iterazione} alberi.")
 print(f"Miglior errore (mlogloss) su Set Esterno: {miglior_score:.4f}")
 
-# VISUALIZZO IL GRAFICO
 if PRINT_GRAPH:
-
-    # Estraiamo lo storico degli errori
     risultati = model.evals_result()
-
-    # Estraiamo i dati di errore per il Train (validation_0) e l'eval_set esterno (validation_1)
     errore_train = risultati['validation_0']['mlogloss']
     errore_val = risultati['validation_1']['mlogloss']
     epoche = range(0, len(errore_train))
 
-    # Disegniamo il grafico
     plt.figure(figsize=(10, 6))
     plt.plot(epoche, errore_train, label='Errore di Addestramento (Train)', color='blue')
-    plt.plot(epoche, errore_val, label='Errore Test Esterno', color='orange') # Adatta anche l'etichetta del grafico
-
-    # Aggiungiamo una linea verticale nel punto esatto in cui è intervenuto l'Early Stopping
+    plt.plot(epoche, errore_val, label='Errore Test Esterno', color='orange') 
     plt.axvline(x=miglior_iterazione, color='red', linestyle='--', label=f'Miglior Iterazione ({miglior_iterazione})')
-
-    # Impaginazione per la tesi
     plt.title('Curva di Apprendimento XGBoost - Rilevamento Difetti Acciaio')
     plt.xlabel('Numero di Alberi (Iterazioni)')
-    plt.ylabel('Errore ') #(Multi-LogLoss)
-    plt.legend()
-    plt.grid(True, linestyle=':', alpha=0.7)
-
-    # Mostra il grafico a schermo
-    plt.show()
-
-#endregion
-
-#region STEP 4B: Rete Neurale (Multilayer Perceptron)
-
-print("\n--- STEP 4B: Ricerca Iperparametri MLP (Grid Search) ---")
-
-# 1. Definisco il modello base MLP
-# Uso early_stopping=True e un max_iter alto per permettere alla rete di convergere senza andare in overfitting
-mlp_base = MLPClassifier(
-    max_iter=1000,       
-    early_stopping=True, 
-    random_state=RANDOM_SEED
-)
-
-# 2. Definisco la griglia dei parametri
-param_grid_mlp = {
-    'hidden_layer_sizes': [(50,), (100,), (50, 25)], # Architettura dei neuroni
-    'activation': ['relu', 'tanh'],                  # Funzioni di attivazione
-    'learning_rate_init': [0.001, 0.01],             # Velocità di apprendimento iniziale
-    'alpha': [0.0001, 0.01]                          # Regolarizzazione (L2 penalty)
-}
-
-# 3. Configuro la Grid Search 
-grid_search_mlp = GridSearchCV(
-    estimator=mlp_base,
-    param_grid=param_grid_mlp,
-    scoring='accuracy',  
-    cv=3,
-    verbose=1,
-    n_jobs=None  # Evita il blocco su Windows
-)
-
-print(f"Inizio addestramento Grid Search MLP per {len(param_grid_mlp['hidden_layer_sizes']) * len(param_grid_mlp['activation']) * len(param_grid_mlp['learning_rate_init']) * len(param_grid_mlp['alpha'])} combinazioni...")
-grid_search_mlp.fit(X_train, y_train)
-
-# 4. Creazione della Tabella dei Risultati MLP
-results_mlp_df = pd.DataFrame(grid_search_mlp.cv_results_)
-colonne_utili_mlp = ['param_hidden_layer_sizes', 'param_activation', 'param_learning_rate_init', 'param_alpha', 'mean_test_score', 'std_test_score', 'rank_test_score']
-tabella_risultati_mlp = results_mlp_df[colonne_utili_mlp].sort_values(by='rank_test_score')
-
-# Rinomino le colonne per averle in italiano e pronte per l'Excel
-tabella_risultati_mlp.rename(columns={
-    'param_hidden_layer_sizes': 'Neuroni e Livelli Nascosti',
-    'param_activation': 'Attivazione',
-    'param_learning_rate_init': 'Learning Rate',
-    'param_alpha': 'Regolarizzazione (Alpha)',
-    'mean_test_score': 'Accuratezza Media (CV)',
-    'std_test_score': 'Deviazione Standard',
-    'rank_test_score': 'Posizione'
-}, inplace=True)
-
-tabella_risultati_mlp['Accuratezza Media (CV)'] = tabella_risultati_mlp['Accuratezza Media (CV)'].apply(lambda x: f"{x:.2%}")
-tabella_risultati_mlp['Deviazione Standard'] = tabella_risultati_mlp['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
-
-print("\n--- I MIGLIORI 5 RISULTATI MLP ---")
-print(tabella_risultati_mlp.head(5).to_string(index=False))
-
-# Salvo la tabella in Excel per il confronto diretto con XGBoost
-tabella_risultati_mlp.to_excel(f"{folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx", index=False)
-#print(f"\nTabella MLP salvata in: {folder_export}/04_Step4B_Risultati_GridSearch_MLP.xlsx")
-
-# 5. ESTRAZIONE PARAMETRI OTTimali E ADDESTRAMENTO FINALE
-migliori_parametri_mlp = grid_search_mlp.best_params_
-print(f"\nMigliori iperparametri MLP trovati: {migliori_parametri_mlp}")
-
-print("\nAllenamento del modello MLP finale con i parametri ottimali...")
-model_mlp = MLPClassifier(
-    hidden_layer_sizes=migliori_parametri_mlp['hidden_layer_sizes'],
-    activation=migliori_parametri_mlp['activation'],
-    learning_rate_init=migliori_parametri_mlp['learning_rate_init'],
-    alpha=migliori_parametri_mlp['alpha'],
-    max_iter=1000,
-    early_stopping=True,
-    random_state=RANDOM_SEED
-)
-
-# Addestramento della rete definitiva
-model_mlp.fit(X_train, y_train)
-
-# VISUALIZZO IL GRAFICO DEL PERCETTRONE (Curva di perdita)
-if PRINT_GRAPH:
-    plt.figure(figsize=(10, 6))
-    plt.plot(model_mlp.loss_curve_, label='Curva di Errore (Loss)', color='green', linewidth=2)
-    plt.title('Curva di Apprendimento MLP - Rilevamento Difetti Acciaio')
-    plt.xlabel('Iterazioni (Epoche)')
-    plt.ylabel('Errore (Loss)')
+    plt.ylabel('Errore (Multi-LogLoss)')
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.7)
     plt.show()
 
 #endregion
 
+GPU
 
 #Valutazione
 #region STEP 5
@@ -470,14 +352,14 @@ if not SKIP_STEP5:
     df_cm_xgb = pd.DataFrame(cm_xgb, index=target_names, columns=target_names)
     print(df_cm_xgb)
 
-    # 3. Valutazione MLP (Rete Neurale)
+    # 3. Valutazione MLP (Rete Neurale) - Il wrapper fa funzionare .predict() magicamente
     y_pred_mlp = model_mlp.predict(X_test)
-    print("\n--- METRICHE PERCETTRONE MULTISTRATO (MLP) ---")
+    print("\n--- METRICHE RETE NEURALE (TENSORFLOW) ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
     print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
 
     # 4. Stampo la matrice di confusione
-    print("\n--- MATRICE DI CONFUSIONE MLP ---")
+    print("\n--- MATRICE DI CONFUSIONE RETE NEURALE ---")
     cm_mlp = confusion_matrix(y_test, y_pred_mlp)
     df_cm_mlp = pd.DataFrame(cm_mlp, index=target_names, columns=target_names)
     print(df_cm_mlp)
@@ -503,7 +385,6 @@ if not SKIP_STEP6:
     indici_difettosi = np.where(max_probs > 0.5)[0]
 
     # Seleziono 100 indici casuali tra quelli difettosi
-    # Nota: se ci sono meno di 100 difetti, permettiamo la ripetizione (replace=True)
     indici_test = np.random.choice(indici_difettosi, size=NUM_TEST, replace=len(indici_difettosi) < NUM_TEST)
 
     cols = X_test.columns.tolist()
@@ -513,7 +394,7 @@ if not SKIP_STEP6:
 
     modelli_da_testare = [
         ("XGBoost", model),
-        ("MLP", model_mlp)
+        ("TensorFlow", model_mlp)
     ]
 
     print(f"Avvio ottimizzazione per {NUM_TEST} barre su entrambi i modelli. Attendere...")
@@ -612,57 +493,54 @@ if not SKIP_STEP7:
 
     # Calcolo quante probabilità residue ci sono (più è bassa, più il modello ha curato bene il difetto)
     media_prob_finale_xgb = df_simulazione['Prob_Finale_XGBoost'].mean()
-    media_prob_finale_mlp = df_simulazione['Prob_Finale_MLP'].mean()
+    media_prob_finale_mlp = df_simulazione['Prob_Finale_TensorFlow'].mean()
 
-    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di temperatura)
+    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela
     media_sforzo_temp_xgb = df_simulazione['Delta_Temp_XGBoost'].mean()
-    media_sforzo_temp_mlp = df_simulazione['Delta_Temp_MLP'].mean()
+    media_sforzo_temp_mlp = df_simulazione['Delta_Temp_TensorFlow'].mean()
 
-    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di pressine)
     media_sforzo_press_xgb = df_simulazione['Delta_Press_XGBoost'].mean()
-    media_sforzo_press_mlp = df_simulazione['Delta_Press_MLP'].mean()
+    media_sforzo_press_mlp = df_simulazione['Delta_Press_TensorFlow'].mean()
 
-    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela (Variazione di velocità)
     media_sforzo_vel_xgb = df_simulazione['Delta_Vel_XGBoost'].mean()
-    media_sforzo_vel_mlp = df_simulazione['Delta_Vel_MLP'].mean()
+    media_sforzo_vel_mlp = df_simulazione['Delta_Vel_TensorFlow'].mean()
 
     # Calcolo quante volte il modello è riuscito a portare il rischio sotto una soglia di sicurezza (es. < 5%)
     sicurezza_xgb = (df_simulazione['Prob_Finale_XGBoost'] < 0.05).sum()
-    sicurezza_mlp = (df_simulazione['Prob_Finale_MLP'] < 0.05).sum()
+    sicurezza_mlp = (df_simulazione['Prob_Finale_TensorFlow'] < 0.05).sum()
 
     # Stampo il verdetto finale
     print("\n1. CAPACITÀ DI RISOLUZIONE DEL DIFETTO:")
-    print(f" - Barre curate in sicurezza (<5% rischio) da XGBoost: {sicurezza_xgb}/{NUM_TEST}")
-    print(f" - Barre curate in sicurezza (<5% rischio) da MLP:     {sicurezza_mlp}/{NUM_TEST}")
-    print(f" - Rischio medio residuo dopo prescrizione XGBoost:      {media_prob_finale_xgb:.2%}")
-    print(f" - Rischio medio residuo dopo prescrizione MLP:          {media_prob_finale_mlp:.2%}")
+    print(f" - Barre curate in sicurezza (<5% rischio) da XGBoost:    {sicurezza_xgb}/{NUM_TEST}")
+    print(f" - Barre curate in sicurezza (<5% rischio) da TensorFlow: {sicurezza_mlp}/{NUM_TEST}")
+    print(f" - Rischio medio residuo dopo prescrizione XGBoost:       {media_prob_finale_xgb:.2%}")
+    print(f" - Rischio medio residuo dopo prescrizione TensorFlow:    {media_prob_finale_mlp:.2%}")
 
-    print("\n2. VARIAZIONI :")
-    print(f" - Variazione media di Temperatura richiesta da XGBoost: {media_sforzo_temp_xgb:.2f} °C")
-    print(f" - Variazione media di Temperatura richiesta da MLP:     {media_sforzo_temp_mlp:.2f} °C")
-    print(f" - Variazione media di Pressione richiesta da XGBoost: {media_sforzo_press_xgb:.2f} bar")
-    print(f" - Variazione media di Pressione richiesta da MLP:     {media_sforzo_press_mlp:.2f} bar")
-    print(f" - Variazione media di Velocità richiesta da XGBoost: {media_sforzo_vel_xgb:.2f} m/s")
-    print(f" - Variazione media di Velocità richiesta da MLP:     {media_sforzo_vel_mlp:.2f} m/s")
+    print("\n2. VARIAZIONI MEDIE RICHIESTE ALL'IMPIANTO:")
+    print(f" - Variazione Temperatura XGBoost:    {media_sforzo_temp_xgb:.2f} °C")
+    print(f" - Variazione Temperatura TensorFlow: {media_sforzo_temp_mlp:.2f} °C")
+    print(f" - Variazione Pressione XGBoost:      {media_sforzo_press_xgb:.2f} bar")
+    print(f" - Variazione Pressione TensorFlow:   {media_sforzo_press_mlp:.2f} bar")
+    print(f" - Variazione Velocità XGBoost:       {media_sforzo_vel_xgb:.2f} m/s")
+    print(f" - Variazione Velocità TensorFlow:    {media_sforzo_vel_mlp:.2f} m/s")
 
     # Logica per dichiarare il vincitore
     if (media_prob_finale_xgb < media_prob_finale_mlp):
         vincitore = "XGBoost"
     else:
-        vincitore = "MLP (Percettrone Multistrato)"
+        vincitore = "Rete Neurale (TensorFlow)"
     print(f"\n VERDETTO DELLA SIMULAZIONE: {vincitore} è il modello più efficace nella prescrizione!")
 
     # Salvataggio di questo report in un file di testo pulito
     with open(f"{folder_export}/07_Step7_Report_Statistico.txt", "w") as file:
         file.write("=== REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===\n\n")
-        file.write(f"Barre curate in sicurezza (<5%) da XGBoost: {sicurezza_xgb}/{NUM_TEST}\n")
-        file.write(f"Barre curate in sicurezza (<5%) da MLP:     {sicurezza_mlp}/{NUM_TEST}\n")
-        file.write(f"Variazione media Temperatura XGBoost:       {media_sforzo_temp_xgb:.2f} °C\n")
-        file.write(f"Variazione media Temperatura MLP:           {media_sforzo_temp_mlp:.2f} °C\n")
-        file.write(f"Variazione media Pressione XGBoost:       {media_sforzo_press_xgb:.2f} bar\n")
-        file.write(f"Variazione media Pressione MLP:           {media_sforzo_press_mlp:.2f} bar\n")
-        file.write(f"Variazione media Velocità XGBoost:       {media_sforzo_vel_xgb:.2f} m/s\n")
-        file.write(f"Variazione media Velocità MLP:           {media_sforzo_vel_mlp:.2f} m/s\n")
-        file.write(f"Vincitore Globale:                          {vincitore}\n")
+        file.write(f"Barre curate in sicurezza (<5%) da XGBoost:    {sicurezza_xgb}/{NUM_TEST}\n")
+        file.write(f"Barre curate in sicurezza (<5%) da TensorFlow: {sicurezza_mlp}/{NUM_TEST}\n")
+        file.write(f"Variazione media Temperatura XGBoost:          {media_sforzo_temp_xgb:.2f} °C\n")
+        file.write(f"Variazione media Temperatura TensorFlow:       {media_sforzo_temp_mlp:.2f} °C\n")
+        file.write(f"Variazione media Pressione XGBoost:            {media_sforzo_press_xgb:.2f} bar\n")
+        file.write(f"Variazione media Pressione TensorFlow:         {media_sforzo_press_mlp:.2f} bar\n")
+        file.write(f"Variazione media Velocità XGBoost:             {media_sforzo_vel_xgb:.2f} m/s\n")
+        file.write(f"Variazione media Velocità TensorFlow:          {media_sforzo_vel_mlp:.2f} m/s\n")
+        file.write(f"Vincitore Globale:                             {vincitore}\n")
 #endregion
-
