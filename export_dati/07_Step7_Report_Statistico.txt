@@ -1,11 +1,11 @@
 === REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===
 
-Barre curate in sicurezza (<5%) da XGBoost: 96/100
-Barre curate in sicurezza (<5%) da MLP:     100/100
-Variazione media Temperatura XGBoost:       26.42 °C
-Variazione media Temperatura MLP:           103.71 °C
-Variazione media Pressione XGBoost:       15.92 bar
-Variazione media Pressione MLP:           8.50 bar
-Variazione media Velocità XGBoost:       1.20 m/s
-Variazione media Velocità MLP:           0.74 m/s
-Vincitore Globale:                          MLP (Percettrone Multistrato)
+Barre curate in sicurezza (<5%) da XGBoost:    99/100
+Barre curate in sicurezza (<5%) da TensorFlow: 100/100
+Variazione media Temperatura XGBoost:          29.41 °C
+Variazione media Temperatura TensorFlow:       78.73 °C
+Variazione media Pressione XGBoost:            10.59 bar
+Variazione media Pressione TensorFlow:         7.41 bar
+Variazione media Velocità XGBoost:             1.61 m/s
+Variazione media Velocità TensorFlow:          1.44 m/s
+Vincitore Globale:                             Rete Neurale (TensorFlow)

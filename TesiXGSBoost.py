@@ -84,14 +84,15 @@ os.makedirs(folder_export, exist_ok=True)
 #Creo un nuovo file da zero aggiungendo i campi di temperatura velocità e pressione modificati in base al difetto
 # region STEP 1 
 
-N_RIGHE_TARGET = 10000
+N_RIGHE_TARGET = 48525
 
 #print("--- STEP 1: Caricamento da file locale ) ---")
 df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 
+ #'No_Defects'  - 1 'Pastry', 2 'Z_Scratch', 3 'K_Scratch', 4 'Stains',5 'Dirtiness', 6'Bumps', 7 'Other_Faults' 
 # Definisco i numeri possibili (da 0 a 7) e la probabilità
 valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
-probabilita = [0.8, 0.03, 0.03, 0.02, 0.02, 0.02, 0.04, 0.04]
+probabilita = [0.960, 0.0033, 0.0039, 0.0081, 0.0015, 0.0011, 0.0083, 0.0138]
 
 
 #  Aggiungo le colonne base di temperatura velocità e pressione
@@ -257,7 +258,7 @@ print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * 
 # 4. Avvio l'addestramento intensivo 
 grid_search.fit(
     X_train_test, y_train_test,
-    eval_set=[(X_test, y_test)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
+    eval_set=[(X_test, y_test)], # <-- TODO CAMBIA IN X_val, y_val 
     verbose=False
 )
 
@@ -332,7 +333,135 @@ if PRINT_GRAPH:
 
 #endregion
 
-GPU
+
+#region STEP 4B: Rete Neurale (TensorFlow / Keras)
+print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")
+
+# Definisco le opzioni (RIDOTTE PER VELOCIZZARE I TEST)
+hidden_layer_sizes_options = [(50,), (50, 25)] 
+activation_options = ['relu']                  
+learning_rate_options = [0.01]                 
+alpha_options = [0.0001]                       
+
+# ==============================================================================
+# <-- TODO CAMBIA IN X_val, y_val 
+# ==============================================================================
+X_eval_keras = X_test
+y_eval_keras = y_test
+# ==============================================================================
+
+# Funzione per costruire il modello Keras dinamicamente
+def build_keras_model(hidden_layers, activation, lr, alpha, input_dim):
+    modello = Sequential()
+    modello.add(Input(shape=(input_dim,)))
+    modello.add(Dense(hidden_layers[0], activation=activation, kernel_regularizer=l2(alpha)))
+    if len(hidden_layers) > 1:
+        for units in hidden_layers[1:]:
+            modello.add(Dense(units, activation=activation, kernel_regularizer=l2(alpha)))
+    modello.add(Dense(8, activation='softmax'))
+    
+    optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    modello.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return modello
+
+combinazioni = list(itertools.product(hidden_layer_sizes_options, activation_options, learning_rate_options, alpha_options))
+print(f"Inizio addestramento per {len(combinazioni)} combinazioni (Keras). Attendere...")
+
+risultati_keras = []
+miglior_modello_keras = None
+miglior_loss = float('inf')
+migliori_parametri_keras = {}
+miglior_history = None
+
+early_stopping = EarlyStopping(
+    monitor='val_loss', 
+    patience=5, 
+    restore_best_weights=True,
+    verbose=0
+)
+
+# Eseguo il ciclo di test dei parametri
+for i, (hl, act, lr, alpha) in enumerate(combinazioni):
+    print(f"[{i+1}/{len(combinazioni)}] Addestramento rete {hl} | {act} | LR:{lr}...")
+    
+    modello_temp = build_keras_model(hl, act, lr, alpha, input_dim=X_train.shape[1])
+    
+    history = modello_temp.fit(
+        X_train, y_train,
+        validation_data=(X_eval_keras, y_eval_keras),
+        epochs=200,
+        batch_size=128,
+        callbacks=[early_stopping],
+        verbose=0  
+    )
+    
+    # Valutazione finale della combinazione
+    val_loss, val_acc = modello_temp.evaluate(X_eval_keras, y_eval_keras, verbose=0)
+    iterazioni_fatte = len(history.history['loss'])
+    
+    risultati_keras.append({
+        'Neuroni e Livelli Nascosti': str(hl),
+        'Attivazione': act,
+        'Learning Rate': lr,
+        'Regolarizzazione (Alpha)': alpha,
+        'Accuratezza Media': val_acc,
+        'Loss Esterna': val_loss,
+        'Iterazioni Effettive': iterazioni_fatte
+    })
+    
+    # Se è il migliore finora, lo salvo
+    if val_loss < miglior_loss:
+        miglior_loss = val_loss
+        miglior_modello_keras = modello_temp
+        miglior_history = history
+        migliori_parametri_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
+
+# Creo la tabella dei risultati
+df_risultati_keras = pd.DataFrame(risultati_keras).sort_values(by='Loss Esterna', ascending=True)
+df_risultati_keras['Accuratezza Media'] = df_risultati_keras['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
+
+print("\n--- I MIGLIORI RISULTATI RETE NEURALE (TENSORFLOW) ---")
+print(df_risultati_keras.head(5).to_string(index=False))
+
+df_risultati_keras.to_excel(f"{folder_export}/04_Step4B_Risultati_TensorFlow.xlsx", index=False)
+
+# ==================================================================
+# WRAPPER PER LA COMPATIBILITA' CON IL RESTO DEL CODICE
+# Questa classe fa credere allo Step 5 e 6 che Keras sia Scikit-Learn
+# ==================================================================
+class KerasScikitWrapper:
+    def __init__(self, keras_model):
+        self.model = keras_model
+    
+    def predict(self, X):
+        # Chiamata tensoriale a basso livello: 100 volte più veloce!
+        probabilita = self.model(np.array(X), training=False).numpy()
+        return np.argmax(probabilita, axis=1)
+        
+    def predict_proba(self, X):
+        # Chiamata tensoriale a basso livello per le probabilità
+        return self.model(np.array(X), training=False).numpy()
+
+model_mlp = KerasScikitWrapper(miglior_modello_keras)
+
+# VISUALIZZO IL GRAFICO DEL PERCETTRONE
+if PRINT_GRAPH:
+    plt.figure(figsize=(10, 6))
+    errore_train_keras = miglior_history.history['loss']
+    errore_val_keras = miglior_history.history['val_loss']
+    epoche_keras = range(1, len(errore_train_keras) + 1)
+    
+    plt.plot(epoche_keras, errore_train_keras, label='Curva di Errore (Train)', color='green', linewidth=2)
+    plt.plot(epoche_keras, errore_val_keras, label='Curva di Errore (Set Esterno)', color='purple', linewidth=2)
+    
+    plt.title('Curva di Apprendimento Rete Neurale - Rilevamento Difetti')
+    plt.xlabel('Iterazioni (Epoche)')
+    plt.ylabel('Errore (Loss)')
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.7)
+    plt.show()
+
+#endregion
 
 #Valutazione
 #region STEP 5
@@ -439,7 +568,8 @@ if not SKIP_STEP6:
                 row_simulation[idx_speed] = x_new[1]        
                 row_simulation[idx_press] = x_new[2]        
                 
-                row_scaled = scaler.transform(pd.DataFrame(row_simulation.reshape(1, -1), columns=X_test.columns))
+                # TOLTO IL DATAFRAME: Passiamo direttamente l'array numpy allo scaler
+                row_scaled = scaler.transform(row_simulation.reshape(1, -1))
                 prob_difetto = modello_corrente.predict_proba(row_scaled)[0][difetto_previsto_idx]
 
                 penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
@@ -448,7 +578,8 @@ if not SKIP_STEP6:
                 
                 return prob_difetto + (0.5 * (penalita_temp + penalita_speed + penalita_press))
 
-            result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-4)
+            # AGGIUNTO UN LIMITE: tol=1e-3 e maxiter=30 evitano che l'algoritmo giri a vuoto
+            result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
 
             # Salvo i risultati specifici del modello
             risultato_barra[f'Prob_Iniziale_{nome_modello}'] = prob_iniziale
