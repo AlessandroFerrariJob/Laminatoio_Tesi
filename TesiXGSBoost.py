@@ -21,7 +21,7 @@ Dipendenze:
 # region LIBRERIE E DICHIARAZIONI 
 
 import os
-# Zittiamo i log di sistema di TensorFlow (DEVE stare primissima cosa)
+# Zittiamo i log di sistema di TensorFlow 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
 
@@ -39,14 +39,16 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from xgboost import XGBClassifier
 from scipy.optimize import minimize, OptimizeWarning
 
-# ---> IMPORTAZIONE TENSORFLOW (Risolve l'errore "tf is not defined") <---
 import tensorflow as tf
+
+tf.get_logger().setLevel('ERROR')
+
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.regularizers import l2
 
-# Ignoro i warning fastidiosi
+# Ignoro i warning 
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
 warnings.filterwarnings("ignore", category=OptimizeWarning)
 
@@ -55,7 +57,7 @@ TEST_SIZE = 0.2         # Percentuale del 20% di test per dare i risultati final
 VALIDATION_SIZE = 0.2   # Percentuale del 20% di parte validazione
 RANDOM_SEED = 42        # Inizializzazione del random seed
 
-# Inizializzo il Random Seed (Ora 'tf' è stato importato correttamente!)
+# Inizializzo il Random Seed
 np.random.seed(RANDOM_SEED)
 tf.random.set_seed(RANDOM_SEED)
 
@@ -63,7 +65,7 @@ tf.random.set_seed(RANDOM_SEED)
 path_file="steel_plates_faults.xlsx"
 folder_export = "export_dati"
 
-# Parametri di debug (REINSERISCI QUESTE 4 RIGHE)
+# Parametri di debug 
 SKIP_STEP5 = False
 SKIP_STEP6 = False
 SKIP_STEP7 = False
@@ -213,7 +215,7 @@ from sklearn.model_selection import PredefinedSplit
 
 print("\n--- STEP 4A: Ricerca Iperparametri XGBoost ---")
 
-# 1. Definisco il modello base. 
+#  Definisco il modello base. 
 xgb_base = XGBClassifier(
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
@@ -229,11 +231,13 @@ param_grid = {
 }
 
 # ==============================================================================
-# PER IL PROF: Ora è tutto impostato sui dati di TEST.
-# PER LA VERSIONE CORRETTA: Cambia "test" in "val" in tutte le righe qui sotto.
+#TODO CAMBIA IN X_val, y_val 
 # ==============================================================================
-X_train_test = pd.concat([X_train, X_test], axis=0) 
-y_train_test = np.concatenate([y_train, y_test])    
+#X_train_test = pd.concat([X_train, X_test], axis=0) 
+#y_train_test = np.concatenate([y_train, y_test])    
+X_train_test = pd.concat([X_train, X_val], axis=0) 
+y_train_test = np.concatenate([y_train, y_val])    
+
 
 test_fold = np.concatenate([
     np.full(X_train.shape[0], -1),  
@@ -255,10 +259,11 @@ grid_search = GridSearchCV(
 
 print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * len(param_grid['max_depth']) * len(param_grid['learning_rate'])} combinazioni...")
 
-# 4. Avvio l'addestramento intensivo 
+# Avvio l'addestramento intensivo 
 grid_search.fit(
     X_train_test, y_train_test,
-    eval_set=[(X_test, y_test)], # <-- TODO CAMBIA IN X_val, y_val 
+    #eval_set=[(X_test, y_test)], # <-- TODO CAMBIA IN X_val, y_val 
+    eval_set=[(X_val, y_val)],  
     verbose=False
 )
 
@@ -285,7 +290,7 @@ print(tabella_risultati.head(5).to_string(index=False))
 
 tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
 
-# 6. Salvo il modello migliore 
+# Salvo il modello migliore 
 model = grid_search.best_estimator_
 print(f"\nMigliori iperparametri trovati: {grid_search.best_params_}")
 
@@ -338,16 +343,24 @@ if PRINT_GRAPH:
 print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")
 
 # Definisco le opzioni (RIDOTTE PER VELOCIZZARE I TEST)
-hidden_layer_sizes_options = [(50,), (50, 25)] 
-activation_options = ['relu']                  
-learning_rate_options = [0.01]                 
-alpha_options = [0.0001]                       
+#hidden_layer_sizes_options = [(50,), (50, 25)] 
+#activation_options = ['relu']                  
+#learning_rate_options = [0.01]                 
+#alpha_options = [0.0001]                       
+
+# Definisco le opzioni (SET COMPLETO)
+hidden_layer_sizes_options = [(32,), (64,), (32, 16), (64, 32)]    # 4 architetture (da semplici a profonde a imbuto)
+activation_options = ['relu', 'tanh']                             # 2 funzioni di attivazione classiche
+learning_rate_options = [0.005, 0.01]                             # 2 velocità (Adam di default a 0.001, e una più aggressiva a 0.01)
+alpha_options = [0.0001, 0.01]
 
 # ==============================================================================
 # <-- TODO CAMBIA IN X_val, y_val 
 # ==============================================================================
-X_eval_keras = X_test
-y_eval_keras = y_test
+#X_eval_keras = X_test
+#y_eval_keras = y_test
+X_eval_keras = X_val
+y_eval_keras = y_val
 # ==============================================================================
 
 # Funzione per costruire il modello Keras dinamicamente
@@ -375,7 +388,7 @@ miglior_history = None
 
 early_stopping = EarlyStopping(
     monitor='val_loss', 
-    patience=5, 
+    patience=3, 
     restore_best_weights=True,
     verbose=0
 )
@@ -390,7 +403,7 @@ for i, (hl, act, lr, alpha) in enumerate(combinazioni):
         X_train, y_train,
         validation_data=(X_eval_keras, y_eval_keras),
         epochs=200,
-        batch_size=128,
+        batch_size=512,
         callbacks=[early_stopping],
         verbose=0  
     )
@@ -417,7 +430,7 @@ for i, (hl, act, lr, alpha) in enumerate(combinazioni):
         migliori_parametri_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
 
 # Creo la tabella dei risultati
-df_risultati_keras = pd.DataFrame(risultati_keras).sort_values(by='Loss Esterna', ascending=True)
+df_risultati_keras = pd.DataFrame(risultati_keras).sort_values(by=['Accuratezza Media', 'Loss Esterna'], ascending=[False, True])
 df_risultati_keras['Accuratezza Media'] = df_risultati_keras['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
 
 print("\n--- I MIGLIORI RISULTATI RETE NEURALE (TENSORFLOW) ---")
@@ -434,12 +447,10 @@ class KerasScikitWrapper:
         self.model = keras_model
     
     def predict(self, X):
-        # Chiamata tensoriale a basso livello: 100 volte più veloce!
         probabilita = self.model(np.array(X), training=False).numpy()
         return np.argmax(probabilita, axis=1)
         
     def predict_proba(self, X):
-        # Chiamata tensoriale a basso livello per le probabilità
         return self.model(np.array(X), training=False).numpy()
 
 model_mlp = KerasScikitWrapper(miglior_modello_keras)
@@ -557,7 +568,7 @@ if not SKIP_STEP6:
             'Press_Iniziale': caso_reale['Pressure_Bar']
         }
 
-        # 3. Testo entrambi i modelli sulla stessa barra
+        # Testo entrambi i modelli sulla stessa barra
         for nome_modello, modello_corrente in modelli_da_testare:
             
             prob_iniziale = modello_corrente.predict_proba(riga_scalata)[0][difetto_previsto_idx]
@@ -567,8 +578,7 @@ if not SKIP_STEP6:
                 row_simulation[idx_temp] = x_new[0]         
                 row_simulation[idx_speed] = x_new[1]        
                 row_simulation[idx_press] = x_new[2]        
-                
-                # TOLTO IL DATAFRAME: Passiamo direttamente l'array numpy allo scaler
+            
                 row_scaled = scaler.transform(row_simulation.reshape(1, -1))
                 prob_difetto = modello_corrente.predict_proba(row_scaled)[0][difetto_previsto_idx]
 
@@ -578,7 +588,7 @@ if not SKIP_STEP6:
                 
                 return prob_difetto + (0.5 * (penalita_temp + penalita_speed + penalita_press))
 
-            # AGGIUNTO UN LIMITE: tol=1e-3 e maxiter=30 evitano che l'algoritmo giri a vuoto
+        
             result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
 
             # Salvo i risultati specifici del modello
