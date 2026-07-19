@@ -86,7 +86,7 @@ os.makedirs(folder_export, exist_ok=True)
 #Creo un nuovo file da zero aggiungendo i campi di temperatura velocità e pressione modificati in base al difetto
 # region STEP 1 
 
-N_RIGHE_TARGET = 48525
+N_RIGHE_TARGET = 30000
 
 #print("--- STEP 1: Caricamento da file locale ) ---")
 df = pd.DataFrame(index=range(N_RIGHE_TARGET))
@@ -383,6 +383,7 @@ print(f"Inizio addestramento per {len(combinazioni)} combinazioni (Keras). Atten
 risultati_keras = []
 miglior_modello_keras = None
 miglior_loss = float('inf')
+miglior_acc = 0.0
 migliori_parametri_keras = {}
 miglior_history = None
 
@@ -423,7 +424,15 @@ for i, (hl, act, lr, alpha) in enumerate(combinazioni):
     })
     
     # Se è il migliore finora, lo salvo
-    if val_loss < miglior_loss:
+    #if val_loss < miglior_loss:
+    #    miglior_loss = val_loss
+    #    miglior_modello_keras = modello_temp
+    #    miglior_history = history
+    #    migliori_parametri_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
+
+    # Se l'accuratezza è maggiore, OPPURE se c'è un pareggio ma la loss è minore:
+    if val_acc > miglior_acc or (val_acc == miglior_acc and val_loss < miglior_loss):
+        miglior_acc = val_acc
         miglior_loss = val_loss
         miglior_modello_keras = modello_temp
         miglior_history = history
@@ -438,22 +447,6 @@ print(df_risultati_keras.head(5).to_string(index=False))
 
 df_risultati_keras.to_excel(f"{folder_export}/04_Step4B_Risultati_TensorFlow.xlsx", index=False)
 
-# ==================================================================
-# WRAPPER PER LA COMPATIBILITA' CON IL RESTO DEL CODICE
-# Questa classe fa credere allo Step 5 e 6 che Keras sia Scikit-Learn
-# ==================================================================
-class KerasScikitWrapper:
-    def __init__(self, keras_model):
-        self.model = keras_model
-    
-    def predict(self, X):
-        probabilita = self.model(np.array(X), training=False).numpy()
-        return np.argmax(probabilita, axis=1)
-        
-    def predict_proba(self, X):
-        return self.model(np.array(X), training=False).numpy()
-
-model_mlp = KerasScikitWrapper(miglior_modello_keras)
 
 # VISUALIZZO IL GRAFICO DEL PERCETTRONE
 if PRINT_GRAPH:
@@ -492,8 +485,11 @@ if not SKIP_STEP5:
     df_cm_xgb = pd.DataFrame(cm_xgb, index=target_names, columns=target_names)
     print(df_cm_xgb)
 
-    # 3. Valutazione MLP (Rete Neurale) - Il wrapper fa funzionare .predict() magicamente
-    y_pred_mlp = model_mlp.predict(X_test)
+# 3. Valutazione MLP (Rete Neurale) - SENZA WRAPPER
+    # Calcolo le probabilità grezze e uso argmax per trovare la classe vincente
+    probabilita_mlp = miglior_modello_keras(np.array(X_test), training=False).numpy()
+    y_pred_mlp = np.argmax(probabilita_mlp, axis=1)
+    
     print("\n--- METRICHE RETE NEURALE (TENSORFLOW) ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
     print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
@@ -532,20 +528,19 @@ if not SKIP_STEP6:
     idx_speed = cols.index('Roller_Speed_m_sec')
     idx_press = cols.index('Pressure_Bar')
 
+# Passo direttamente il modello nativo di Keras senza wrapper
     modelli_da_testare = [
         ("XGBoost", model),
-        ("TensorFlow", model_mlp)
+        ("TensorFlow", miglior_modello_keras)
     ]
 
     print(f"Avvio ottimizzazione per {NUM_TEST} barre su entrambi i modelli. Attendere...")
 
     # 2. Eseguo il ciclo sui 100 casi
     for i, idx_caso in enumerate(indici_test):
-        # Avanzamento visivo a blocchi di 10 per non bloccare lo schermo
         if (i+1) % 10 == 0:
             print(f"Progresso: {i+1}/{NUM_TEST} barre completate...")
 
-        # Estrazione dati della barra corrente
         riga_scalata = X_test.iloc[idx_caso].values.reshape(1, -1)
         riga_reale = scaler.inverse_transform(riga_scalata)
         caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
@@ -559,7 +554,6 @@ if not SKIP_STEP6:
         x0 = [temp_start, speed_start, press_start]
         bounds = [(800, 1000), (9, 15), (150, 300)]
 
-        # Variabili per tracciare chi vince su questa barra
         risultato_barra = {
             'Id_Barra': i+1,
             'Difetto': difetto_nome,
@@ -571,7 +565,15 @@ if not SKIP_STEP6:
         # Testo entrambi i modelli sulla stessa barra
         for nome_modello, modello_corrente in modelli_da_testare:
             
-            prob_iniziale = modello_corrente.predict_proba(riga_scalata)[0][difetto_previsto_idx]
+            # --- FUNZIONE DI SMISTAMENTO CHIAMATE ---
+            def ottieni_probabilita(mod, nome, dati):
+                if nome == "XGBoost":
+                    return mod.predict_proba(dati)[0][difetto_previsto_idx]
+                else: # TensorFlow
+                    return mod(np.array(dati), training=False).numpy()[0][difetto_previsto_idx]
+            # ----------------------------------------
+
+            prob_iniziale = ottieni_probabilita(modello_corrente, nome_modello, riga_scalata)
             
             def objective_function(x_new):
                 row_simulation = caso_reale.values.copy() 
@@ -580,7 +582,9 @@ if not SKIP_STEP6:
                 row_simulation[idx_press] = x_new[2]        
             
                 row_scaled = scaler.transform(row_simulation.reshape(1, -1))
-                prob_difetto = modello_corrente.predict_proba(row_scaled)[0][difetto_previsto_idx]
+                
+                # Uso lo smistatore invece del wrapper
+                prob_difetto = ottieni_probabilita(modello_corrente, nome_modello, row_scaled)
 
                 penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
                 penalita_speed = ((x_new[1] - caso_reale['Roller_Speed_m_sec']) / caso_reale['Roller_Speed_m_sec'])**2
@@ -591,14 +595,15 @@ if not SKIP_STEP6:
         
             result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
 
-            # Salvo i risultati specifici del modello
             risultato_barra[f'Prob_Iniziale_{nome_modello}'] = prob_iniziale
             
             if result.success:
                 row_finale = caso_reale.values.copy()
                 row_finale[idx_temp], row_finale[idx_speed], row_finale[idx_press] = result.x
                 row_df_fin = pd.DataFrame(row_finale.reshape(1, -1), columns=X_test.columns)
-                new_prob = modello_corrente.predict_proba(scaler.transform(row_df_fin))[0][difetto_previsto_idx]
+                
+                # Ricalcolo il risultato finale usando lo smistatore
+                new_prob = ottieni_probabilita(modello_corrente, nome_modello, scaler.transform(row_df_fin))
                 
                 risultato_barra[f'Prob_Finale_{nome_modello}'] = new_prob
                 risultato_barra[f'Temp_Finale_{nome_modello}'] = result.x[0]

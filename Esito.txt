@@ -1,0 +1,173 @@
+ --- STEP 1  10000 righe generate. Variabili simulate corrette.
+         Rolling_Temp_C  Roller_Speed_m_sec  Pressure_Bar
+Defects                                                  
+0                950.01               10.00        200.04
+1               1024.64               10.06        200.42
+2                949.19               14.43        199.65
+3                951.26                5.52        200.06
+4                879.89                9.96        201.56
+5                951.95               10.04        258.70
+6                947.84                9.87        139.82
+7                874.93                7.96        200.25
+
+--- STEP 2: Preparazione Target e Features ---
+Dataset pronto per lo split. Feature: 3, Campioni: 30000
+
+--- STEP 3: Split e Scaling ---
+
+--- STEP 3: Dati divisi e scalati: 
+Train 18000, Val 6000, Test 6000
+
+--- STEP 4A: Ricerca Iperparametri XGBoost ---
+Inizio addestramento Grid Search per 27 combinazioni...
+Fitting 1 folds for each of 27 candidates, totalling 27 fits
+
+--- I MIGLIORI 5 RISULTATI XGBOOST ---
+ Learning Rate  Max Depth  N. Alberi Accuratezza Media Deviazione Standard  Posizione
+          0.05          6        300            98.70%              0.0000          1
+          0.05          6        100            98.70%              0.0000          1
+          0.05          6        200            98.70%              0.0000          1
+          0.10          9        200            98.70%              0.0000          1
+          0.10          9        300            98.70%              0.0000          1
+
+Migliori iperparametri trovati: {'learning_rate': 0.05, 'max_depth': 6, 'n_estimators': 100}
+
+Allenamento del modello finale con i parametri ottimali (necessario per grafico ed Early Stopping)...
+Training completato. Il modello si è fermato a 97 alberi.
+Miglior errore (mlogloss) su Set Esterno: 0.0489
+
+--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---
+Inizio addestramento per 32 combinazioni (Keras). Attendere...
+[1/32] Addestramento rete (32,) | relu | LR:0.005...
+[2/32] Addestramento rete (32,) | relu | LR:0.005...
+[3/32] Addestramento rete (32,) | relu | LR:0.01...
+[4/32] Addestramento rete (32,) | relu | LR:0.01...
+[5/32] Addestramento rete (32,) | tanh | LR:0.005...
+[6/32] Addestramento rete (32,) | tanh | LR:0.005...
+[7/32] Addestramento rete (32,) | tanh | LR:0.01...
+[8/32] Addestramento rete (32,) | tanh | LR:0.01...
+[9/32] Addestramento rete (64,) | relu | LR:0.005...
+[10/32] Addestramento rete (64,) | relu | LR:0.005...
+[11/32] Addestramento rete (64,) | relu | LR:0.01...
+[12/32] Addestramento rete (64,) | relu | LR:0.01...
+[13/32] Addestramento rete (64,) | tanh | LR:0.005...
+[14/32] Addestramento rete (64,) | tanh | LR:0.005...
+[15/32] Addestramento rete (64,) | tanh | LR:0.01...
+[16/32] Addestramento rete (64,) | tanh | LR:0.01...
+[17/32] Addestramento rete (32, 16) | relu | LR:0.005...
+[18/32] Addestramento rete (32, 16) | relu | LR:0.005...
+[19/32] Addestramento rete (32, 16) | relu | LR:0.01...
+[20/32] Addestramento rete (32, 16) | relu | LR:0.01...
+[21/32] Addestramento rete (32, 16) | tanh | LR:0.005...
+[22/32] Addestramento rete (32, 16) | tanh | LR:0.005...
+[23/32] Addestramento rete (32, 16) | tanh | LR:0.01...
+[24/32] Addestramento rete (32, 16) | tanh | LR:0.01...
+[25/32] Addestramento rete (64, 32) | relu | LR:0.005...
+[26/32] Addestramento rete (64, 32) | relu | LR:0.005...
+[27/32] Addestramento rete (64, 32) | relu | LR:0.01...
+[28/32] Addestramento rete (64, 32) | relu | LR:0.01...
+[29/32] Addestramento rete (64, 32) | tanh | LR:0.005...
+[30/32] Addestramento rete (64, 32) | tanh | LR:0.005...
+[31/32] Addestramento rete (64, 32) | tanh | LR:0.01...
+[32/32] Addestramento rete (64, 32) | tanh | LR:0.01...
+
+--- I MIGLIORI RISULTATI RETE NEURALE (TENSORFLOW) ---
+Neuroni e Livelli Nascosti Attivazione  Learning Rate  Regolarizzazione (Alpha) Accuratezza Media  Loss Esterna  Iterazioni Effettive
+                     (32,)        relu          0.005                    0.0001            99.02%      0.042053                    63
+                     (32,)        tanh          0.005                    0.0001            99.00%      0.041495                    90
+                     (64,)        tanh          0.005                    0.0001            98.97%      0.041219                    47
+                     (64,)        relu          0.005                    0.0001            98.97%      0.041824                    44
+                     (32,)        tanh          0.010                    0.0001            98.95%      0.041523                    21
+
+=== STEP 5: VALUTAZIONE COMPARATIVA ===
+
+--- METRICHE XGBOOST ---
+Accuratezza Globale: 98.72%
+              precision    recall  f1-score   support
+
+       Bumps       0.98      0.91      0.95        47
+   Dirtiness       0.33      0.12      0.18         8
+   K_Scratch       0.88      0.83      0.85        53
+  No_Defects       0.99      1.00      0.99      5750
+Other_Faults       0.91      0.87      0.89        89
+      Pastry       0.59      0.56      0.57        18
+      Stains       0.00      0.00      0.00         9
+   Z_Scratch       1.00      0.69      0.82        26
+
+    accuracy                           0.99      6000
+   macro avg       0.71      0.62      0.66      6000
+weighted avg       0.99      0.99      0.99      6000
+
+
+--- MATRICE DI CONFUSIONE XGBOOST ---
+              Bumps  Dirtiness  K_Scratch  No_Defects  Other_Faults  Pastry  Stains  Z_Scratch
+Bumps            43          0          0           4             0       0       0          0
+Dirtiness         0          1          0           7             0       0       0          0
+K_Scratch         0          0         44           8             1       0       0          0
+No_Defects        1          1          6        5730             5       7       0          0
+Other_Faults      0          0          0          11            77       0       1          0
+Pastry            0          1          0           7             0      10       0          0
+Stains            0          0          0           7             2       0       0          0
+Z_Scratch         0          0          0           8             0       0       0         18
+
+--- METRICHE RETE NEURALE (TENSORFLOW) ---
+Accuratezza Globale: 98.88%
+              precision    recall  f1-score   support
+
+       Bumps       0.98      0.91      0.95        47
+   Dirtiness       1.00      0.75      0.86         8
+   K_Scratch       0.98      0.75      0.85        53
+  No_Defects       0.99      1.00      0.99      5750
+Other_Faults       0.91      0.87      0.89        89
+      Pastry       0.71      0.56      0.62        18
+      Stains       0.00      0.00      0.00         9
+   Z_Scratch       1.00      0.69      0.82        26
+
+    accuracy                           0.99      6000
+   macro avg       0.82      0.69      0.75      6000
+weighted avg       0.99      0.99      0.99      6000
+
+
+--- MATRICE DI CONFUSIONE RETE NEURALE ---
+              Bumps  Dirtiness  K_Scratch  No_Defects  Other_Faults  Pastry  Stains  Z_Scratch
+Bumps            43          0          0           4             0       0       0          0
+Dirtiness         0          6          0           2             0       0       0          0
+K_Scratch         0          0         40          12             1       0       0          0
+No_Defects        1          0          1        5739             5       4       0          0
+Other_Faults      0          0          0          11            77       0       1          0
+Pastry            0          0          0           8             0      10       0          0
+Stains            0          0          0           7             2       0       0          0
+Z_Scratch         0          0          0           8             0       0       0         18
+
+--- STEP 6: Simulazione Prescrittiva Massiva (100 Barre) ---
+Avvio ottimizzazione per 100 barre su entrambi i modelli. Attendere...
+Progresso: 10/100 barre completate...
+Progresso: 20/100 barre completate...
+Progresso: 30/100 barre completate...
+Progresso: 40/100 barre completate...
+Progresso: 50/100 barre completate...
+Progresso: 60/100 barre completate...
+Progresso: 70/100 barre completate...
+Progresso: 80/100 barre completate...
+Progresso: 90/100 barre completate...
+Progresso: 100/100 barre completate...
+
+Simulazione completata. Dati grezzi salvati in 'export_dati/06_Step6_Simulazione_Massiva_100.xlsx'
+
+=== STEP 7: REPORT STATISTICO SULL'ANALISI PRESCRITTIVA ===
+
+1. CAPACITÀ DI RISOLUZIONE DEL DIFETTO:
+ - Barre curate in sicurezza (<5% rischio) da XGBoost:    99/100
+ - Barre curate in sicurezza (<5% rischio) da TensorFlow: 100/100
+ - Rischio medio residuo dopo prescrizione XGBoost:       0.77%
+ - Rischio medio residuo dopo prescrizione TensorFlow:    0.08%
+
+2. VARIAZIONI MEDIE RICHIESTE ALL'IMPIANTO:
+ - Variazione Temperatura XGBoost:    38.88 °C
+ - Variazione Temperatura TensorFlow: 65.67 °C
+ - Variazione Pressione XGBoost:      8.09 bar
+ - Variazione Pressione TensorFlow:   4.55 bar
+ - Variazione Velocità XGBoost:       1.51 m/s
+ - Variazione Velocità TensorFlow:    1.50 m/s
+
+ VERDETTO DELLA SIMULAZIONE: Rete Neurale (TensorFlow) è il modello più efficace nella prescrizione!
