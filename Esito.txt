@@ -73,11 +73,11 @@ Inizio addestramento per 32 combinazioni (Keras). Attendere...
 
 --- I MIGLIORI RISULTATI RETE NEURALE (TENSORFLOW) ---
 Neuroni e Livelli Nascosti Attivazione  Learning Rate  Regolarizzazione (Alpha) Accuratezza Media  Loss Esterna  Iterazioni Effettive
-                     (32,)        relu          0.005                    0.0001            99.02%      0.042053                    63
-                     (32,)        tanh          0.005                    0.0001            99.00%      0.041495                    90
-                     (64,)        tanh          0.005                    0.0001            98.97%      0.041219                    47
-                     (64,)        relu          0.005                    0.0001            98.97%      0.041824                    44
-                     (32,)        tanh          0.010                    0.0001            98.95%      0.041523                    21
+                     (32,)        tanh          0.005                    0.0001            98.98%      0.041553                    94
+                     (32,)        relu          0.005                    0.0001            98.98%      0.041912                    67
+                     (64,)        tanh          0.005                    0.0001            98.97%      0.041220                    37
+                     (64,)        relu          0.005                    0.0001            98.97%      0.041517                    50
+                     (32,)        relu          0.010                    0.0001            98.97%      0.041864                    20
 
 === STEP 5: VALUTAZIONE COMPARATIVA ===
 
@@ -111,7 +111,7 @@ Stains            0          0          0           7             2       0     
 Z_Scratch         0          0          0           8             0       0       0         18
 
 --- METRICHE RETE NEURALE (TENSORFLOW) ---
-Accuratezza Globale: 98.88%
+Accuratezza Globale: 98.90%
               precision    recall  f1-score   support
 
        Bumps       0.98      0.91      0.95        47
@@ -119,12 +119,12 @@ Accuratezza Globale: 98.88%
    K_Scratch       0.98      0.75      0.85        53
   No_Defects       0.99      1.00      0.99      5750
 Other_Faults       0.91      0.87      0.89        89
-      Pastry       0.71      0.56      0.62        18
+      Pastry       0.77      0.56      0.65        18
       Stains       0.00      0.00      0.00         9
    Z_Scratch       1.00      0.69      0.82        26
 
     accuracy                           0.99      6000
-   macro avg       0.82      0.69      0.75      6000
+   macro avg       0.83      0.69      0.75      6000
 weighted avg       0.99      0.99      0.99      6000
 
 
@@ -133,7 +133,7 @@ weighted avg       0.99      0.99      0.99      6000
 Bumps            43          0          0           4             0       0       0          0
 Dirtiness         0          6          0           2             0       0       0          0
 K_Scratch         0          0         40          12             1       0       0          0
-No_Defects        1          0          1        5739             5       4       0          0
+No_Defects        1          0          1        5740             5       3       0          0
 Other_Faults      0          0          0          11            77       0       1          0
 Pastry            0          0          0           8             0      10       0          0
 Stains            0          0          0           7             2       0       0          0
@@ -160,14 +160,19 @@ Simulazione completata. Dati grezzi salvati in 'export_dati/06_Step6_Simulazione
  - Barre curate in sicurezza (<5% rischio) da XGBoost:    99/100
  - Barre curate in sicurezza (<5% rischio) da TensorFlow: 100/100
  - Rischio medio residuo dopo prescrizione XGBoost:       0.77%
- - Rischio medio residuo dopo prescrizione TensorFlow:    0.08%
+ - Rischio medio residuo dopo prescrizione TensorFlow:    0.22%
 
 2. VARIAZIONI MEDIE RICHIESTE ALL'IMPIANTO:
  - Variazione Temperatura XGBoost:    38.88 °C
- - Variazione Temperatura TensorFlow: 65.67 °C
+ - Variazione Temperatura TensorFlow: 71.80 °C
  - Variazione Pressione XGBoost:      8.09 bar
- - Variazione Pressione TensorFlow:   4.55 bar
+ - Variazione Pressione TensorFlow:   6.82 bar
  - Variazione Velocità XGBoost:       1.51 m/s
- - Variazione Velocità TensorFlow:    1.50 m/s
+ - Variazione Velocità TensorFlow:    1.48 m/s
 
- VERDETTO DELLA SIMULAZIONE: Rete Neurale (TensorFlow) è il modello più efficace nella prescrizione!
+3. PRESTAZIONI COMPUTAZIONALI (TEMPI DI OTTIMIZZAZIONE):
+ - Tempo medio per barra XGBoost:     0.1284 secondi
+ - Tempo medio per barra TensorFlow:  0.5019 secondi
+ - Tempo totale per 100 barre XGBoost:12.84 secondi
+ - Tempo totale per 100 barre TF:     50.19 secondi
+                                                                                                                                                                                                                                                                             

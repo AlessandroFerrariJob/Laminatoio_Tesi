@@ -21,6 +21,7 @@ Dipendenze:
 # region LIBRERIE E DICHIARAZIONI 
 
 import os
+import time
 # Zittiamo i log di sistema di TensorFlow 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
@@ -83,7 +84,7 @@ os.makedirs(folder_export, exist_ok=True)
 # endregion
 
 
-#Creo un nuovo file da zero aggiungendo i campi di temperatura velocità e pressione modificati in base al difetto
+#Creazione di un nuovo file con aggiunta dei campi di temperatura velocità e pressione e probabilità
 # region STEP 1 
 
 N_RIGHE_TARGET = 30000
@@ -91,7 +92,6 @@ N_RIGHE_TARGET = 30000
 #print("--- STEP 1: Caricamento da file locale ) ---")
 df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 
- #'No_Defects'  - 1 'Pastry', 2 'Z_Scratch', 3 'K_Scratch', 4 'Stains',5 'Dirtiness', 6'Bumps', 7 'Other_Faults' 
 # Definisco i numeri possibili (da 0 a 7) e la probabilità
 valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
 probabilita = [0.960, 0.0033, 0.0039, 0.0081, 0.0015, 0.0011, 0.0083, 0.0138]
@@ -103,6 +103,7 @@ df['Rolling_Temp_C'] = np.random.normal(loc=950, scale=20, size=n_rows)
 df['Roller_Speed_m_sec'] = np.random.normal(loc=10, scale=1, size=n_rows)
 df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=n_rows)
 df['Defects'] = np.random.choice(valori_possibili, size=n_rows, p=probabilita)
+
 
 # 'No_Defects'  - 1 'Pastry', 2 'Z_Scratch', 3 'K_Scratch', 4 'Stains',5 'Dirtiness', 6'Bumps', 7 'Other_Faults' 
 
@@ -593,9 +594,17 @@ if not SKIP_STEP6:
                 return prob_difetto + (0.5 * (penalita_temp + penalita_speed + penalita_press))
 
         
+            # --- INIZIO MISURAZIONE TEMPO ---
+            inizio_ottimizzazione = time.perf_counter()
+            
             result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
+            
+            fine_ottimizzazione = time.perf_counter()
+            tempo_impiegato = fine_ottimizzazione - inizio_ottimizzazione
+            # --- FINE MISURAZIONE TEMPO ---
 
             risultato_barra[f'Prob_Iniziale_{nome_modello}'] = prob_iniziale
+            risultato_barra[f'Tempo_Esecuzione_{nome_modello}'] = tempo_impiegato # <-- SALVA IL TEMPO
             
             if result.success:
                 row_finale = caso_reale.values.copy()
@@ -651,6 +660,12 @@ if not SKIP_STEP7:
     media_sforzo_vel_xgb = df_simulazione['Delta_Vel_XGBoost'].mean()
     media_sforzo_vel_mlp = df_simulazione['Delta_Vel_TensorFlow'].mean()
 
+    # Calcolo del tempo medio di prescrizione per barra
+    media_tempo_xgb = df_simulazione['Tempo_Esecuzione_XGBoost'].mean()
+    media_tempo_mlp = df_simulazione['Tempo_Esecuzione_TensorFlow'].mean()
+    tempo_totale_xgb = df_simulazione['Tempo_Esecuzione_XGBoost'].sum()
+    tempo_totale_mlp = df_simulazione['Tempo_Esecuzione_TensorFlow'].sum()
+
     # Calcolo quante volte il modello è riuscito a portare il rischio sotto una soglia di sicurezza (es. < 5%)
     sicurezza_xgb = (df_simulazione['Prob_Finale_XGBoost'] < 0.05).sum()
     sicurezza_mlp = (df_simulazione['Prob_Finale_TensorFlow'] < 0.05).sum()
@@ -669,6 +684,12 @@ if not SKIP_STEP7:
     print(f" - Variazione Pressione TensorFlow:   {media_sforzo_press_mlp:.2f} bar")
     print(f" - Variazione Velocità XGBoost:       {media_sforzo_vel_xgb:.2f} m/s")
     print(f" - Variazione Velocità TensorFlow:    {media_sforzo_vel_mlp:.2f} m/s")
+
+    print("\n3. PRESTAZIONI COMPUTAZIONALI (TEMPI DI OTTIMIZZAZIONE):")
+    print(f" - Tempo medio per barra XGBoost:     {media_tempo_xgb:.4f} secondi")
+    print(f" - Tempo medio per barra TensorFlow:  {media_tempo_mlp:.4f} secondi")
+    print(f" - Tempo totale per 100 barre XGBoost:{tempo_totale_xgb:.2f} secondi")
+    print(f" - Tempo totale per 100 barre TF:     {tempo_totale_mlp:.2f} secondi")
 
     # Logica per dichiarare il vincitore
     if (media_prob_finale_xgb < media_prob_finale_mlp):
@@ -689,4 +710,8 @@ if not SKIP_STEP7:
         file.write(f"Variazione media Velocità XGBoost:             {media_sforzo_vel_xgb:.2f} m/s\n")
         file.write(f"Variazione media Velocità TensorFlow:          {media_sforzo_vel_mlp:.2f} m/s\n")
         file.write(f"Vincitore Globale:                             {vincitore}\n")
+        file.write(f"\nTempo medio per barra XGBoost:                 {media_tempo_xgb:.4f} sec\n")
+        file.write(f"Tempo medio per barra TensorFlow:              {media_tempo_mlp:.4f} sec\n")
+        file.write(f"Tempo totale (100 barre) XGBoost:              {tempo_totale_xgb:.2f} sec\n")
+        file.write(f"Tempo totale (100 barre) TensorFlow:           {tempo_totale_mlp:.2f} sec\n")
 #endregion
