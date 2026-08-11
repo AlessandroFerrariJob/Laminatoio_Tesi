@@ -2,67 +2,68 @@
 ===============================================================================
 Modulo:         TesiXGSBoost.py
 Autore:         Alessandro Ferrari
-Data:           01 Marzo 2026
-Versione:       2.0 (Integrazione TensorFlow)
+Data:           08 agosto 2026
+Versione:       2.1 (Integrazione TensorFlow)
 ===============================================================================
 
 Descrizione:
-Questo modulo contiene il programma di tesi di Alessandro Ferrari 
+Questo modulo contiene il programma di tesi di Alessandro Ferrari. 
+Nel modulo viene fatta una sia un analisi predittiva e  che una prescrittiva 
+confrontando due algoritmi: XGBoost e Percettrone multistrato.
 
 Dipendenze:
-    - Librerie Standard: os, itertools
-    - Manipolazione Dati: pandas, numpy
-    - Machine Learning: scikit-learn (sklearn), xgboost, tensorflow
-    - Ottimizzazione Statistica: scipy
-    - Acquisizione Dati: ucimlrepo
+    - Acquisizione e Manipolazione: pandas, numpy, ucimlrepo
+    - Machine Learning Predittivo: scikit-learn, xgboost, tensorflow (Keras)
+    - Ottimizzazione Prescrittiva: scipy.optimize
 ===============================================================================
 """
 
 # region LIBRERIE E DICHIARAZIONI 
 
+#===============================================================================
+#                           Import librerie
+#===============================================================================
 import os
-import time
-# Zittiamo i log di sistema di TensorFlow 
+# Filtro dei log informativi di TensorFlow
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0' 
-
-# Importazione delle librerie
+import time
+import warnings
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import itertools
-import warnings
-
-from ucimlrepo import fetch_ucirepo
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from xgboost import XGBClassifier
 from scipy.optimize import minimize, OptimizeWarning
-
 import tensorflow as tf
-
-tf.get_logger().setLevel('ERROR')
-
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.regularizers import l2
 
-# Ignoro i warning 
+
+#===============================================================================
+#                           Configurazione parametri librerie 
+#===============================================================================
+
+# Filtro dei log non critici
 warnings.filterwarnings("ignore", message="X does not have valid feature names")
 warnings.filterwarnings("ignore", category=OptimizeWarning)
+tf.get_logger().setLevel('ERROR')
 
-# COSTANTI
-TEST_SIZE = 0.2         # Percentuale del 20% di test per dare i risultati finali
+#===============================================================================
+#                           Costanti e variabili
+#===============================================================================
+
+# Costanti
+TEST_SIZE = 0.2         # Percentuale del 20% di test
 VALIDATION_SIZE = 0.2   # Percentuale del 20% di parte validazione
-RANDOM_SEED = 42        # Inizializzazione del random seed
+RANDOM_SEED = 105       # Inizializzazione del random seed (42)
 
-# Inizializzo il Random Seed
-np.random.seed(RANDOM_SEED)
-tf.random.set_seed(RANDOM_SEED)
-
-# VARIABILI
+# Variabili
 path_file="steel_plates_faults.xlsx"
 folder_export = "export_dati"
 
@@ -72,77 +73,86 @@ SKIP_STEP6 = False
 SKIP_STEP7 = False
 PRINT_GRAPH = False  # Visualizzo il grafico dell'errore
 
-
 # endregion
 
 
-#varie utility
-# region STEP 0
-
-# Creo una cartella per tenere tutto in ordine
-os.makedirs(folder_export, exist_ok=True)
-# endregion
-
-
-#Creazione di un nuovo file con aggiunta dei campi di temperatura velocità e pressione e probabilità
+#Creazione di un nuovo file con aggiunta dei campi di temperatura, velocità,  pressione e difetto
 # region STEP 1 
 
-N_RIGHE_TARGET = 30000
+# Init del Random Seed
+np.random.seed(RANDOM_SEED)
+tf.random.set_seed(RANDOM_SEED)
 
-#print("--- STEP 1: Caricamento da file locale ) ---")
+# Creazione cartella dei file di debug
+os.makedirs(folder_export, exist_ok=True)
+
+#===============================================================================
+#                           Creazione file con dati di base
+#===============================================================================
+
+N_RIGHE_TARGET = 60000
+
+# Init DataFrame vuoto
 df = pd.DataFrame(index=range(N_RIGHE_TARGET))
 
-# Definisco i numeri possibili (da 0 a 7) e la probabilità
+# Definizione delle classi di difetto 
+# e relative probabilità di occorrenza 
+# Queste percentuali derivano da dati rilevati da varie fonti 
 valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
-probabilita = [0.960, 0.0033, 0.0039, 0.0081, 0.0015, 0.0011, 0.0083, 0.0138]
+probabilita = [0.980, 0.00165, 0.00195, 0.00405, 0.00075, 0.00055, 0.00415, 0.0069]
 
 
-#  Aggiungo le colonne base di temperatura velocità e pressione
-n_rows = N_RIGHE_TARGET
-df['Rolling_Temp_C'] = np.random.normal(loc=950, scale=20, size=n_rows)
-df['Roller_Speed_m_sec'] = np.random.normal(loc=10, scale=1, size=n_rows)
-df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=n_rows)
-df['Defects'] = np.random.choice(valori_possibili, size=n_rows, p=probabilita)
+# Generazione dei parametri di base  (Temperatura, Velocità, Pressione)
+# con distribuzioni normali (Gausssiane)
+df['Rolling_Temp_C'] = np.random.normal(loc=950, scale=20, size=N_RIGHE_TARGET)
+df['Roller_Speed_m_sec'] = np.random.normal(loc=10, scale=1, size=N_RIGHE_TARGET)
+df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=N_RIGHE_TARGET)
 
+# Assegnazione casua di difetto in base alle probabilità definite
+df['Defects'] = np.random.choice(valori_possibili, size=N_RIGHE_TARGET, p=probabilita)
 
-# 'No_Defects'  - 1 'Pastry', 2 'Z_Scratch', 3 'K_Scratch', 4 'Stains',5 'Dirtiness', 6'Bumps', 7 'Other_Faults' 
+#===============================================================================
+#              Modifica dei parametri in funzione del difetto
+#===============================================================================
+# Legenda: 'No_Defects': 0, 'Pastry': 1, 'Z_Scratch': 2, 'K_Scratch': 3, 
+# 'Stains': 4, 'Dirtiness': 5, 'Bumps': 6, 'Other_Faults': 7
 
-#difetto di sfogliatura aumento la temperatura (Pastry)
+#1 Pastry (Sfogliatura): Incremento della temperatura
 mask_defect = (df['Defects'] == 1) 
 df.loc[mask_defect, 'Rolling_Temp_C'] += np.random.uniform(50, 100, size=mask_defect.sum())
 
-#difetto di graffi e altro aumento la velocità (Z_Scratch)
+#2 Z_Scratch (Graffi Z): Incremento della velocità di laminazione
 mask_defect = (df['Defects'] == 2) 
 df.loc[mask_defect, 'Roller_Speed_m_sec'] += np.random.uniform(3, 6, size=mask_defect.sum())
 
-#difetto di graffi diminuisco la velocità (K_Scratch)
+#3 K_Scratch (Graffi K): Decremento della velocità di laminazione
 mask_defect =  (df['Defects'] == 3)
 df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(3, 6, size=mask_defect.sum())
 
-#difetto di  diminuisco la temperatura (Stains)
+#4 Stains (Macchie): Decremento della temperatura di laminazione
 mask_defect =  (df['Defects'] == 4)
 df.loc[mask_defect, 'Rolling_Temp_C'] -= np.random.uniform(50, 100, size=mask_defect.sum())
 
-#difetto irregolarità aumento la pressione(Bumps)
+# 5 Bumps (Irregolarità): Incremento della pressione dei rulli
 mask_defect = (df['Defects'] == 5) 
 df.loc[mask_defect, 'Pressure_Bar'] += np.random.uniform(40, 80, size=mask_defect.sum())
 
-#difetto sporco diminuisco la pressione(Dirtiness)
+# 6 Dirtiness (Sporco): Decremento della pressione dei rulli
 mask_defect = (df['Defects'] == 6)
 df.loc[mask_defect, 'Pressure_Bar'] -= np.random.uniform(40, 80, size=mask_defect.sum())
 
-#difetto di altro diminuisco la temperatura e aumento la velocità (Other_Faults)
+# 7 Other_Faults (Difetti generici): Modifica combinata,  diminuzione di temperatura e velocità
 mask_defect =  (df['Defects'] == 7)
 df.loc[mask_defect, 'Rolling_Temp_C'] -= np.random.uniform(50, 100, size=mask_defect.sum())
 df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(1, 3, size=mask_defect.sum())
 
-#Salvo il file per diagnostica
-df.to_excel(f"{folder_export}/01_Step1_Dati_Aumentati.xlsx", index=False)
+# Esportazione dati per diagnostica
+df.to_excel(f"{folder_export}/01_Step1_Dati_Generati.xlsx", index=False)
+
+# Stampa informazioni di log
 print("\n --- STEP 1  10000 righe generate. Variabili simulate corrette.")
-# Raggruppo per difetto e calcolo la media dei 3 parametri fisici
 tabella_medie = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
 print(tabella_medie)
-
 # endregion
 
 
@@ -231,11 +241,6 @@ param_grid = {
     'learning_rate': [0.01, 0.05, 0.1]
 }
 
-# ==============================================================================
-#TODO CAMBIA IN X_val, y_val 
-# ==============================================================================
-#X_train_test = pd.concat([X_train, X_test], axis=0) 
-#y_train_test = np.concatenate([y_train, y_test])    
 X_train_test = pd.concat([X_train, X_val], axis=0) 
 y_train_test = np.concatenate([y_train, y_val])    
 
@@ -263,7 +268,6 @@ print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * 
 # Avvio l'addestramento intensivo 
 grid_search.fit(
     X_train_test, y_train_test,
-    #eval_set=[(X_test, y_test)], # <-- TODO CAMBIA IN X_val, y_val 
     eval_set=[(X_val, y_val)],  
     verbose=False
 )
@@ -341,25 +345,14 @@ if PRINT_GRAPH:
 
 
 #region STEP 4B: Rete Neurale (TensorFlow / Keras)
-print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")
+print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")                 
 
-# Definisco le opzioni (RIDOTTE PER VELOCIZZARE I TEST)
-#hidden_layer_sizes_options = [(50,), (50, 25)] 
-#activation_options = ['relu']                  
-#learning_rate_options = [0.01]                 
-#alpha_options = [0.0001]                       
-
-# Definisco le opzioni (SET COMPLETO)
+# Definisco le opzioni 
 hidden_layer_sizes_options = [(32,), (64,), (32, 16), (64, 32)]    # 4 architetture (da semplici a profonde a imbuto)
 activation_options = ['relu', 'tanh']                             # 2 funzioni di attivazione classiche
 learning_rate_options = [0.005, 0.01]                             # 2 velocità (Adam di default a 0.001, e una più aggressiva a 0.01)
 alpha_options = [0.0001, 0.01]
 
-# ==============================================================================
-# <-- TODO CAMBIA IN X_val, y_val 
-# ==============================================================================
-#X_eval_keras = X_test
-#y_eval_keras = y_test
 X_eval_keras = X_val
 y_eval_keras = y_val
 # ==============================================================================
@@ -424,13 +417,6 @@ for i, (hl, act, lr, alpha) in enumerate(combinazioni):
         'Iterazioni Effettive': iterazioni_fatte
     })
     
-    # Se è il migliore finora, lo salvo
-    #if val_loss < miglior_loss:
-    #    miglior_loss = val_loss
-    #    miglior_modello_keras = modello_temp
-    #    miglior_history = history
-    #    migliori_parametri_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
-
     # Se l'accuratezza è maggiore, OPPURE se c'è un pareggio ma la loss è minore:
     if val_acc > miglior_acc or (val_acc == miglior_acc and val_loss < miglior_loss):
         miglior_acc = val_acc
@@ -695,7 +681,7 @@ if not SKIP_STEP7:
     if (media_prob_finale_xgb < media_prob_finale_mlp):
         vincitore = "XGBoost"
     else:
-        vincitore = "Rete Neurale (TensorFlow)"
+        vincitore = "Rete Neurale (TensorFlow)"   
     print(f"\n VERDETTO DELLA SIMULAZIONE: {vincitore} è il modello più efficace nella prescrizione!")
 
     # Salvataggio di questo report in un file di testo pulito

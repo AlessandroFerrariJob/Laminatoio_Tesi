@@ -1,16 +1,16 @@
 === REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===
 
-Barre curate in sicurezza (<5%) da XGBoost:    99/100
+Barre curate in sicurezza (<5%) da XGBoost:    100/100
 Barre curate in sicurezza (<5%) da TensorFlow: 100/100
-Variazione media Temperatura XGBoost:          38.88 °C
-Variazione media Temperatura TensorFlow:       71.80 °C
-Variazione media Pressione XGBoost:            8.09 bar
-Variazione media Pressione TensorFlow:         6.82 bar
-Variazione media Velocità XGBoost:             1.51 m/s
-Variazione media Velocità TensorFlow:          1.48 m/s
+Variazione media Temperatura XGBoost:          30.74 °C
+Variazione media Temperatura TensorFlow:       72.52 °C
+Variazione media Pressione XGBoost:            10.99 bar
+Variazione media Pressione TensorFlow:         5.78 bar
+Variazione media Velocità XGBoost:             1.48 m/s
+Variazione media Velocità TensorFlow:          1.52 m/s
 Vincitore Globale:                             Rete Neurale (TensorFlow)
 
-Tempo medio per barra XGBoost:                 0.1284 sec
-Tempo medio per barra TensorFlow:              0.5019 sec
-Tempo totale (100 barre) XGBoost:              12.84 sec
-Tempo totale (100 barre) TensorFlow:           50.19 sec
+Tempo medio per barra XGBoost:                 0.2936 sec
+Tempo medio per barra TensorFlow:              1.4072 sec
+Tempo totale (100 barre) XGBoost:              29.36 sec
+Tempo totale (100 barre) TensorFlow:           140.72 sec
