@@ -61,11 +61,10 @@ tf.get_logger().setLevel('ERROR')
 # Costanti
 TEST_SIZE = 0.2         # Percentuale del 20% di test
 VALIDATION_SIZE = 0.2   # Percentuale del 20% di parte validazione
-RANDOM_SEED = 105       # Inizializzazione del random seed (42)
+RANDOM_SEED = 42       # Inizializzazione del random seed
 
 # Variabili
-path_file="steel_plates_faults.xlsx"
-folder_export = "export_dati"
+export_folder = "export_dati"
 
 # Parametri di debug 
 SKIP_STEP5 = False
@@ -76,7 +75,7 @@ PRINT_GRAPH = False  # Visualizzo il grafico dell'errore
 # endregion
 
 
-#Creazione di un nuovo file con aggiunta dei campi di temperatura, velocità,  pressione e difetto
+# Creazione di un nuovo file con aggiunta dei campi di temperatura, velocità,  pressione e difetto
 # region STEP 1 
 
 # Init del Random Seed
@@ -84,32 +83,32 @@ np.random.seed(RANDOM_SEED)
 tf.random.set_seed(RANDOM_SEED)
 
 # Creazione cartella dei file di debug
-os.makedirs(folder_export, exist_ok=True)
+os.makedirs(export_folder, exist_ok=True)
 
 #===============================================================================
 #                           Creazione file con dati di base
 #===============================================================================
 
-N_RIGHE_TARGET = 60000
+TARGET_ROWS = 60000
 
 # Init DataFrame vuoto
-df = pd.DataFrame(index=range(N_RIGHE_TARGET))
+df = pd.DataFrame(index=range(TARGET_ROWS))
 
 # Definizione delle classi di difetto 
 # e relative probabilità di occorrenza 
 # Queste percentuali derivano da dati rilevati da varie fonti 
-valori_possibili = [0, 1, 2, 3, 4, 5, 6, 7]
-probabilita = [0.980, 0.00165, 0.00195, 0.00405, 0.00075, 0.00055, 0.00415, 0.0069]
+possible_values = [0, 1, 2, 3, 4, 5, 6, 7]
+probabilities = [0.980, 0.00165, 0.00195, 0.00405, 0.00075, 0.00055, 0.00415, 0.0069]
 
 
 # Generazione dei parametri di base  (Temperatura, Velocità, Pressione)
 # con distribuzioni normali (Gausssiane)
-df['Rolling_Temp_C'] = np.random.normal(loc=950, scale=20, size=N_RIGHE_TARGET)
-df['Roller_Speed_m_sec'] = np.random.normal(loc=10, scale=1, size=N_RIGHE_TARGET)
-df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=N_RIGHE_TARGET)
+df['Rolling_Temp_C'] = np.random.normal(loc=950, scale=20, size=TARGET_ROWS)
+df['Roller_Speed_m_sec'] = np.random.normal(loc=10, scale=1, size=TARGET_ROWS)
+df['Pressure_Bar'] = np.random.normal(loc=200, scale=10, size=TARGET_ROWS)
 
 # Assegnazione casua di difetto in base alle probabilità definite
-df['Defects'] = np.random.choice(valori_possibili, size=N_RIGHE_TARGET, p=probabilita)
+df['Defects'] = np.random.choice(possible_values, size=TARGET_ROWS, p=probabilities)
 
 #===============================================================================
 #              Modifica dei parametri in funzione del difetto
@@ -147,23 +146,28 @@ df.loc[mask_defect, 'Rolling_Temp_C'] -= np.random.uniform(50, 100, size=mask_de
 df.loc[mask_defect, 'Roller_Speed_m_sec'] -= np.random.uniform(1, 3, size=mask_defect.sum())
 
 # Esportazione dati per diagnostica
-df.to_excel(f"{folder_export}/01_Step1_Dati_Generati.xlsx", index=False)
+df.to_excel(f"{export_folder}/01_Step1_Dati_Generati.xlsx", index=False)
 
 # Stampa informazioni di log
 print("\n --- STEP 1  10000 righe generate. Variabili simulate corrette.")
-tabella_medie = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
-print(tabella_medie)
+averages_df = df.groupby('Defects')[['Rolling_Temp_C', 'Roller_Speed_m_sec', 'Pressure_Bar']].mean().round(2)
+print(averages_df)
 # endregion
 
 
 # region STEP 2: Preparazione Target e Features
 print("\n--- STEP 2: Preparazione Target e Features ---")
 
-# 1. Separo le feature (X) dal target (y)
+#===============================================================================
+#              Separazione Variabili e Mappatura Classi
+#===============================================================================
+
+# Separazione delle feature (variabili indipendenti X) dal target (variabile dipendente y)
 X = df.drop(columns=['Defects'])
 
-# 2. Mappiamo i numeri generati ai nomi reali dei difetti 
-mappa_difetti = {
+# Definizione del dizionario per la conversione dei codici numerici in testi dei difetti 
+
+defect_map = {
     0: 'No_Defects',
     1: 'Pastry',
     2: 'Z_Scratch',
@@ -174,47 +178,48 @@ mappa_difetti = {
     7: 'Other_Faults'
 }
 
-# Creo una serie testuale usando il dizionario
-y_names = df['Defects'].map(mappa_difetti)
+# Conversione della colonna target in formato testuale usando il dizionario
+y_names = df['Defects'].map(defect_map)
 
-# 3. Inizializzo il LabelEncoder 
+# Inizializzazione ed esecuzione del LabelEncoder
 label_encoder = LabelEncoder()
 y_encoded = label_encoder.fit_transform(y_names)
 
 # Salvataggio file per diagnostica 
 df_step2 = X.copy()
 df_step2['Difetto_Target_Numerico'] = y_encoded
-df_step2.to_excel(f"{folder_export}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
+df_step2.to_excel(f"{export_folder}/02_Step2_Dati_Ingegnerizzati.xlsx", index=False)
 
 print(f"Dataset pronto per lo split. Feature: {X.shape[1]}, Campioni: {X.shape[0]}")
 # endregion
 
 
-#Divido i dati in test e train
-#region STEP 3
+# Split e scaling
+#region STEP 3 
 print("\n--- STEP 3: Split e Scaling ---")
 X_temp, X_test_initial, y_temp, y_test = train_test_split(
     X, y_encoded, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=y_encoded)
 
-#qui prendo i valori di validazione 
+# Primo split: isolamento del Test Set
 X_train_initial, X_val_initial, y_train, y_val = train_test_split(
     X_temp, y_temp, test_size=VALIDATION_SIZE / (1-TEST_SIZE), random_state=RANDOM_SEED, stratify=y_temp)
 
-#Scalo ma rimuove i titoli
+# Secondo split: derivazione del Validation Set
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train_initial)
 X_val_scaled = scaler.transform(X_val_initial)
 X_test_scaled = scaler.transform(X_test_initial)
 
-#Rimetto i titoli
+# L'operazione di 'fit' viene eseguita solo sul Train Set per prevenire 
+# fenomeni di data leakage. Validation e Test Set vengono solo trasformati.
 X_train = pd.DataFrame(X_train_scaled, columns=X.columns)
 X_val = pd.DataFrame(X_val_scaled, columns=X.columns)
 X_test = pd.DataFrame(X_test_scaled, columns=X.columns)
 
-# Salvo i dati scalati 
-X_train.to_excel(f"{folder_export}/03_Step3_Train_Scalato.xlsx", index=False)
-X_val.to_excel(f"{folder_export}/03_Step3_Val_Scalato.xlsx", index=False)
-X_test.to_excel(f"{folder_export}/03_Step3_Test_Scalato.xlsx", index=False)
+# Salvataggio per diagnostica
+X_train.to_excel(f"{export_folder}/03_Step3_Train_Scalato.xlsx", index=False)
+X_val.to_excel(f"{export_folder}/03_Step3_Val_Scalato.xlsx", index=False)
+X_test.to_excel(f"{export_folder}/03_Step3_Test_Scalato.xlsx", index=False)
 
 print("\n--- STEP 3: Dati divisi e scalati: ")
 print(f"Train {len(X_train)}, Val {len(X_val)}, Test {len(X_test)}")
@@ -226,7 +231,12 @@ from sklearn.model_selection import PredefinedSplit
 
 print("\n--- STEP 4A: Ricerca Iperparametri XGBoost ---")
 
-#  Definisco il modello base. 
+#===============================================================================
+#                               Hyperparameter Tuning
+#===============================================================================
+
+
+# Inizializzazione dell'algoritmo XGBoost
 xgb_base = XGBClassifier(
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
@@ -234,25 +244,27 @@ xgb_base = XGBClassifier(
     early_stopping_rounds=10   
 )
 
-# Definisco la "griglia" dei parametri da testare
+# Definizione dello spazio degli iperparametri
 param_grid = {
     'n_estimators': [100, 200, 300],
     'max_depth': [3, 6, 9],
     'learning_rate': [0.01, 0.05, 0.1]
 }
 
+#Concatenazione temporanea di Train e Validation set per la compatibilità con GridSearchCV
 X_train_test = pd.concat([X_train, X_val], axis=0) 
 y_train_test = np.concatenate([y_train, y_val])    
 
+# Costruzione di un vettore indice per forzare la GridSearchCV a validare 
+# esclusivamente sul Validation Set (indice 0), ignorando il Train Set (indice -1)
 
 test_fold = np.concatenate([
     np.full(X_train.shape[0], -1),  
     np.full(X_test.shape[0], 0)     
 ])
-
 ps = PredefinedSplit(test_fold)
 
-# 3. Configuro la Grid Search 
+# Configurazione modulo di ottimizzazione
 grid_search = GridSearchCV(
     estimator=xgb_base,
     param_grid=param_grid,
@@ -265,20 +277,20 @@ grid_search = GridSearchCV(
 
 print(f"Inizio addestramento Grid Search per {len(param_grid['n_estimators']) * len(param_grid['max_depth']) * len(param_grid['learning_rate'])} combinazioni...")
 
-# Avvio l'addestramento intensivo 
+# Avvio dell'ottimizzazione
 grid_search.fit(
     X_train_test, y_train_test,
     eval_set=[(X_val, y_val)],  
     verbose=False
 )
 
-# Creo la Tabella dei Risultati
+# Estrazione dei risultati della Grid Search in struttura tabellare
 results_df = pd.DataFrame(grid_search.cv_results_)
 
-colonne_utili = ['param_learning_rate', 'param_max_depth', 'param_n_estimators', 'mean_test_score', 'std_test_score', 'rank_test_score']
-tabella_risultati = results_df[colonne_utili].sort_values(by='rank_test_score')
+useful_columns = ['param_learning_rate', 'param_max_depth', 'param_n_estimators', 'mean_test_score', 'std_test_score', 'rank_test_score']
+results_table = results_df[useful_columns].sort_values(by='rank_test_score')
 
-tabella_risultati.rename(columns={
+results_table.rename(columns={
     'param_learning_rate': 'Learning Rate',
     'param_max_depth': 'Max Depth',
     'param_n_estimators': 'N. Alberi',
@@ -287,100 +299,110 @@ tabella_risultati.rename(columns={
     'rank_test_score': 'Posizione'
 }, inplace=True)
 
-tabella_risultati['Accuratezza Media'] = tabella_risultati['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
-tabella_risultati['Deviazione Standard'] = tabella_risultati['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
+results_table['Accuratezza Media'] = results_table['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
+results_table['Deviazione Standard'] = results_table['Deviazione Standard'].apply(lambda x: f"{x:.4f}")
 
 print("\n--- I MIGLIORI 5 RISULTATI XGBOOST ---")
-print(tabella_risultati.head(5).to_string(index=False))
+print(results_table.head(5).to_string(index=False))
 
-tabella_risultati.to_excel(f"{folder_export}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
+#Salvataggio per diagnostica
+results_table.to_excel(f"{export_folder}/04_Step4_Risultati_GridSearch_XGBoost.xlsx", index=False)
 
-# Salvo il modello migliore 
+# Isolamento della migliore configurazione
 model = grid_search.best_estimator_
 print(f"\nMigliori iperparametri trovati: {grid_search.best_params_}")
 
-migliori_parametri = grid_search.best_params_
+#Isolamento della migliore configurazione
+best_parameters = grid_search.best_params_
 
-print("\nAllenamento del modello finale con i parametri ottimali (necessario per grafico ed Early Stopping)...")
+print("\n Training del modello finale con i parametri migliori")
 model = XGBClassifier(
-    n_estimators=migliori_parametri['n_estimators'], 
-    learning_rate=migliori_parametri['learning_rate'], 
-    max_depth=migliori_parametri['max_depth'],
+    n_estimators=best_parameters['n_estimators'], 
+    learning_rate=best_parameters['learning_rate'], 
+    max_depth=best_parameters['max_depth'],
     objective='multi:softprob', 
     random_state=RANDOM_SEED, 
     eval_metric='mlogloss',
     early_stopping_rounds=10  
 )
 
+# Train del modello con i migliori parametri e con Early stopping sul dataset di validazione
 model.fit(
     X_train, y_train,
-    eval_set=[(X_train, y_train), (X_test, y_test)], # <-- CAMBIA IN X_val, y_val PER LA VERSIONE CORRETTA
+    eval_set=[(X_train, y_train), (X_test, y_test)], 
     verbose=False
 )
 
-miglior_iterazione = model.best_iteration + 1 
-miglior_score = model.best_score
+# Ricerca miglior risultato e numero di iteraizoni
+best_iteration = model.best_iteration + 1 
+best_score = model.best_score
+print(f"Training completato. Il modello si è fermato a {best_iteration} alberi.")
+print(f"Miglior errore (mlogloss) su Set Esterno: {best_score:.4f}")
 
-print(f"Training completato. Il modello si è fermato a {miglior_iterazione} alberi.")
-print(f"Miglior errore (mlogloss) su Set Esterno: {miglior_score:.4f}")
-
+#Stampa del grafico opzionale per vedere come si comporta Early stopping
 if PRINT_GRAPH:
-    risultati = model.evals_result()
-    errore_train = risultati['validation_0']['mlogloss']
-    errore_val = risultati['validation_1']['mlogloss']
-    epoche = range(0, len(errore_train))
-
+    results = model.evals_result()
+    train_error = results['validation_0']['mlogloss']
+    val_error = results['validation_1']['mlogloss']
+    epochs = range(0, len(train_error))
     plt.figure(figsize=(10, 6))
-    plt.plot(epoche, errore_train, label='Errore di Addestramento (Train)', color='blue')
-    plt.plot(epoche, errore_val, label='Errore Test Esterno', color='orange') 
-    plt.axvline(x=miglior_iterazione, color='red', linestyle='--', label=f'Miglior Iterazione ({miglior_iterazione})')
+    plt.plot(epochs, train_error, label='Errore di Addestramento (Train)', color='blue')
+    plt.plot(epochs, val_error, label='Errore Test Esterno', color='orange') 
+    plt.axvline(x=best_iteration, color='red', linestyle='--', label=f'Miglior Iterazione ({best_iteration})')
     plt.title('Curva di Apprendimento XGBoost - Rilevamento Difetti Acciaio')
     plt.xlabel('Numero di Alberi (Iterazioni)')
     plt.ylabel('Errore (Multi-LogLoss)')
     plt.legend()
     plt.grid(True, linestyle=':', alpha=0.7)
     plt.show()
-
 #endregion
 
 
-#region STEP 4B: Rete Neurale (TensorFlow / Keras)
+#region STEP 4B: Rete Neurale (Multi-Layer Perceptron (MLP))
 print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")                 
 
-# Definisco le opzioni 
+# Definizione dello spazio degli iperparametri
 hidden_layer_sizes_options = [(32,), (64,), (32, 16), (64, 32)]    # 4 architetture (da semplici a profonde a imbuto)
 activation_options = ['relu', 'tanh']                             # 2 funzioni di attivazione classiche
 learning_rate_options = [0.005, 0.01]                             # 2 velocità (Adam di default a 0.001, e una più aggressiva a 0.01)
 alpha_options = [0.0001, 0.01]
 
+# Isolamento delle variabili di validazione
 X_eval_keras = X_val
 y_eval_keras = y_val
-# ==============================================================================
+
+#===============================================================================
+#              Factory Pattern per Generazione Dinamica del Modello
+#===============================================================================
 
 # Funzione per costruire il modello Keras dinamicamente
 def build_keras_model(hidden_layers, activation, lr, alpha, input_dim):
-    modello = Sequential()
-    modello.add(Input(shape=(input_dim,)))
-    modello.add(Dense(hidden_layers[0], activation=activation, kernel_regularizer=l2(alpha)))
+    model = Sequential()
+    model.add(Input(shape=(input_dim,)))
+    # Aggiunta dinamica dei layer nascosti
+    model.add(Dense(hidden_layers[0], activation=activation, kernel_regularizer=l2(alpha)))
     if len(hidden_layers) > 1:
         for units in hidden_layers[1:]:
-            modello.add(Dense(units, activation=activation, kernel_regularizer=l2(alpha)))
-    modello.add(Dense(8, activation='softmax'))
-    
+            model.add(Dense(units, activation=activation, kernel_regularizer=l2(alpha)))
+    # Layer di output multiclasse (8 nodi) con attivazione Softmax per conversione in probabilità
+    model.add(Dense(8, activation='softmax'))
+
+    #Compilazione del grafo computazionale
     optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-    modello.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-    return modello
+    model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-combinazioni = list(itertools.product(hidden_layer_sizes_options, activation_options, learning_rate_options, alpha_options))
-print(f"Inizio addestramento per {len(combinazioni)} combinazioni (Keras). Attendere...")
+# Generazione del prodotto cartesiano di tutti gli iperparametri definiti
+combinations = list(itertools.product(hidden_layer_sizes_options, activation_options, learning_rate_options, alpha_options))
+print(f"Inizio addestramento per {len(combinations)} combinazioni (Keras). Attendere...")
+results_keras = []
+best_keras_model = None
+best_loss = float('inf')
+best_accuracy = 0.0
+best_parameters_keras = {}
+best_history = None
 
-risultati_keras = []
-miglior_modello_keras = None
-miglior_loss = float('inf')
-miglior_acc = 0.0
-migliori_parametri_keras = {}
-miglior_history = None
-
+# Configurazione del meccanismo di interruzione anticipata (Early Stopping)
 early_stopping = EarlyStopping(
     monitor='val_loss', 
     patience=3, 
@@ -388,13 +410,13 @@ early_stopping = EarlyStopping(
     verbose=0
 )
 
-# Eseguo il ciclo di test dei parametri
-for i, (hl, act, lr, alpha) in enumerate(combinazioni):
-    print(f"[{i+1}/{len(combinazioni)}] Addestramento rete {hl} | {act} | LR:{lr}...")
+# Ciclo di validazione delle combinazioni
+for i, (hl, act, lr, alpha) in enumerate(combinations):
+    print(f"[{i+1}/{len(combinations)}] Addestramento rete {hl} | {act} | LR:{lr}...")
     
-    modello_temp = build_keras_model(hl, act, lr, alpha, input_dim=X_train.shape[1])
+    temp_model = build_keras_model(hl, act, lr, alpha, input_dim=X_train.shape[1])
     
-    history = modello_temp.fit(
+    history = temp_model.fit(
         X_train, y_train,
         validation_data=(X_eval_keras, y_eval_keras),
         epochs=200,
@@ -403,47 +425,47 @@ for i, (hl, act, lr, alpha) in enumerate(combinazioni):
         verbose=0  
     )
     
-    # Valutazione finale della combinazione
-    val_loss, val_acc = modello_temp.evaluate(X_eval_keras, y_eval_keras, verbose=0)
-    iterazioni_fatte = len(history.history['loss'])
+    # Valutazione della combinazione
+    val_loss, val_acc = temp_model.evaluate(X_eval_keras, y_eval_keras, verbose=0)
+    completed_iterations = len(history.history['loss'])
     
-    risultati_keras.append({
+    results_keras.append({
         'Neuroni e Livelli Nascosti': str(hl),
         'Attivazione': act,
         'Learning Rate': lr,
         'Regolarizzazione (Alpha)': alpha,
         'Accuratezza Media': val_acc,
         'Loss Esterna': val_loss,
-        'Iterazioni Effettive': iterazioni_fatte
+        'Iterazioni Effettive': completed_iterations
     })
     
-    # Se l'accuratezza è maggiore, OPPURE se c'è un pareggio ma la loss è minore:
-    if val_acc > miglior_acc or (val_acc == miglior_acc and val_loss < miglior_loss):
-        miglior_acc = val_acc
-        miglior_loss = val_loss
-        miglior_modello_keras = modello_temp
-        miglior_history = history
-        migliori_parametri_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
+    # Se l'accuratezza è maggiore, o se c'è un pareggio ma la loss è minore:
+    if val_acc > best_accuracy or (val_acc == best_accuracy and val_loss < best_loss):
+        best_accuracy = val_acc
+        best_loss = val_loss
+        best_keras_model = temp_model
+        best_history = history
+        best_parameters_keras = {'hidden_layers': hl, 'activation': act, 'lr': lr, 'alpha': alpha}
 
-# Creo la tabella dei risultati
-df_risultati_keras = pd.DataFrame(risultati_keras).sort_values(by=['Accuratezza Media', 'Loss Esterna'], ascending=[False, True])
-df_risultati_keras['Accuratezza Media'] = df_risultati_keras['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
+# Creazione della tabella dei results
+df_results_keras = pd.DataFrame(results_keras).sort_values(by=['Accuratezza Media', 'Loss Esterna'], ascending=[False, True])
+df_results_keras['Accuratezza Media'] = df_results_keras['Accuratezza Media'].apply(lambda x: f"{x:.2%}")
 
 print("\n--- I MIGLIORI RISULTATI RETE NEURALE (TENSORFLOW) ---")
-print(df_risultati_keras.head(5).to_string(index=False))
+print(df_results_keras.head(5).to_string(index=False))
 
-df_risultati_keras.to_excel(f"{folder_export}/04_Step4B_Risultati_TensorFlow.xlsx", index=False)
+df_results_keras.to_excel(f"{export_folder}/04_Step4B_Risultati_TensorFlow.xlsx", index=False)
 
 
-# VISUALIZZO IL GRAFICO DEL PERCETTRONE
+#Stampa del grafico opzionale per vedere come si comporta Early stopping
 if PRINT_GRAPH:
     plt.figure(figsize=(10, 6))
-    errore_train_keras = miglior_history.history['loss']
-    errore_val_keras = miglior_history.history['val_loss']
-    epoche_keras = range(1, len(errore_train_keras) + 1)
+    train_error_keras = best_history.history['loss']
+    val_error_keras = best_history.history['val_loss']
+    epochs_keras = range(1, len(train_error_keras) + 1)
     
-    plt.plot(epoche_keras, errore_train_keras, label='Curva di Errore (Train)', color='green', linewidth=2)
-    plt.plot(epoche_keras, errore_val_keras, label='Curva di Errore (Set Esterno)', color='purple', linewidth=2)
+    plt.plot(epochs_keras, train_error_keras, label='Curva di Errore (Train)', color='green', linewidth=2)
+    plt.plot(epochs_keras, val_error_keras, label='Curva di Errore (Set Esterno)', color='purple', linewidth=2)
     
     plt.title('Curva di Apprendimento Rete Neurale - Rilevamento Difetti')
     plt.xlabel('Iterazioni (Epoche)')
@@ -454,34 +476,34 @@ if PRINT_GRAPH:
 
 #endregion
 
-#Valutazione
-#region STEP 5
+# Valutazione comparativa
+# region STEP 5
+
+# Salto fase per debug sezioni precedenti
 if not SKIP_STEP5:
     print("\n=== STEP 5: VALUTAZIONE COMPARATIVA ===")
     target_names = label_encoder.classes_
 
-    # 1. Valutazione XGBoost
+    # Valutazione XGBoost
     y_pred_xgb = model.predict(X_test)
     print("\n--- METRICHE XGBOOST ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_xgb):.2%}")
     print(classification_report(y_test, y_pred_xgb, target_names=target_names, zero_division=0))
 
-    # 2. Stampo la matrice di confusione
+    # Stampa la matrice di confusione XGBoost
     print("\n--- MATRICE DI CONFUSIONE XGBOOST ---")
     cm_xgb = confusion_matrix(y_test, y_pred_xgb)
     df_cm_xgb = pd.DataFrame(cm_xgb, index=target_names, columns=target_names)
     print(df_cm_xgb)
 
-# 3. Valutazione MLP (Rete Neurale) - SENZA WRAPPER
-    # Calcolo le probabilità grezze e uso argmax per trovare la classe vincente
-    probabilita_mlp = miglior_modello_keras(np.array(X_test), training=False).numpy()
-    y_pred_mlp = np.argmax(probabilita_mlp, axis=1)
-    
+    # Valutazione MLP (Rete Neurale) 
+    mlp_probabilities = best_keras_model(np.array(X_test), training=False).numpy()
+    y_pred_mlp = np.argmax(mlp_probabilities, axis=1)
     print("\n--- METRICHE RETE NEURALE (TENSORFLOW) ---")
     print(f"Accuratezza Globale: {accuracy_score(y_test, y_pred_mlp):.2%}")
     print(classification_report(y_test, y_pred_mlp, target_names=target_names, zero_division=0))
 
-    # 4. Stampo la matrice di confusione
+    # Stampa la matrice di confusione MLP
     print("\n--- MATRICE DI CONFUSIONE RETE NEURALE ---")
     cm_mlp = confusion_matrix(y_test, y_pred_mlp)
     df_cm_mlp = pd.DataFrame(cm_mlp, index=target_names, columns=target_names)
@@ -490,80 +512,84 @@ if not SKIP_STEP5:
 
 #endregion
 
-#region STEP 6: Simulazione Prescrittiva su Larga Scala (100 Barre)
+#region STEP 6: Simulazione Prescrittiva su 100 Barre
 if not SKIP_STEP6:
-    print("\n--- STEP 6: Simulazione Prescrittiva Massiva (100 Barre) ---")
+    print("\n--- STEP 6: Simulazione Prescrittiva su 100 Barre ---")
 
     NUM_TEST = 100
-    risultati_simulazione = []
+    simulation_results = []
 
-    # 1. Trovo tutti i potenziali casi critici (usando XGBoost come "ispettore" base)
-    probs_riferimento = model.predict_proba(X_test)
-    idx_nessun_difetto = list(label_encoder.classes_).index('No_Defects')
+    # Ricerca di tutti i potenziali casi critici (usando XGBoost come "ispettore" base)
+    reference_probs = model.predict_proba(X_test)
+    idx_no_defect = list(label_encoder.classes_).index('No_Defects')
     
-    probs_solo_difetti = probs_riferimento.copy()
-    probs_solo_difetti[:, idx_nessun_difetto] = 0.0
+    probs_only_defects = reference_probs.copy()
+    probs_only_defects[:, idx_no_defect] = 0.0
 
-    max_probs = np.max(probs_solo_difetti, axis=1)
-    indici_difettosi = np.where(max_probs > 0.5)[0]
+    max_probs = np.max(probs_only_defects, axis=1)
+    defective_indices = np.where(max_probs > 0.5)[0]
 
-    # Seleziono 100 indici casuali tra quelli difettosi
-    indici_test = np.random.choice(indici_difettosi, size=NUM_TEST, replace=len(indici_difettosi) < NUM_TEST)
+    # Selezie di 100 indici casuali tra quelli difettosi
+    test_indices = np.random.choice(defective_indices, size=NUM_TEST, replace=len(defective_indices) < NUM_TEST)
 
     cols = X_test.columns.tolist()
     idx_temp = cols.index('Rolling_Temp_C')
     idx_speed = cols.index('Roller_Speed_m_sec')
     idx_press = cols.index('Pressure_Bar')
 
-# Passo direttamente il modello nativo di Keras senza wrapper
-    modelli_da_testare = [
+    # Modelli da testare
+    models_to_test = [
         ("XGBoost", model),
-        ("TensorFlow", miglior_modello_keras)
+        ("TensorFlow", best_keras_model)
     ]
 
     print(f"Avvio ottimizzazione per {NUM_TEST} barre su entrambi i modelli. Attendere...")
 
     # 2. Eseguo il ciclo sui 100 casi
-    for i, idx_caso in enumerate(indici_test):
+    for i, case_idx in enumerate(test_indices):
+        # Stampa avanzamento
         if (i+1) % 10 == 0:
             print(f"Progresso: {i+1}/{NUM_TEST} barre completate...")
 
-        riga_scalata = X_test.iloc[idx_caso].values.reshape(1, -1)
-        riga_reale = scaler.inverse_transform(riga_scalata)
-        caso_reale = pd.Series(riga_reale[0], index=X_test.columns)
+        # Estrazione del campione e scalatura in valori reali 
+        scaled_row = X_test.iloc[case_idx].values.reshape(1, -1)
+        real_row = scaler.inverse_transform(scaled_row)
+        real_case = pd.Series(real_row[0], index=X_test.columns)
 
-        difetto_previsto_idx = np.argmax(probs_riferimento[idx_caso])
-        difetto_nome = label_encoder.inverse_transform([difetto_previsto_idx])[0]
+        # Difetto da risolvere
+        predicted_defect_idx = np.argmax(reference_probs[case_idx])
+        defect_name = label_encoder.inverse_transform([predicted_defect_idx])[0]
 
-        temp_start = max(800, min(1000, caso_reale['Rolling_Temp_C']))
-        speed_start = max(9, min(15, caso_reale['Roller_Speed_m_sec']))
-        press_start = max(150, min(300, caso_reale['Pressure_Bar']))
+        #Vettore di partenza limitato
+        temp_start = max(800, min(1000, real_case['Rolling_Temp_C']))
+        speed_start = max(9, min(15, real_case['Roller_Speed_m_sec']))
+        press_start = max(150, min(300, real_case['Pressure_Bar']))
         x0 = [temp_start, speed_start, press_start]
         bounds = [(800, 1000), (9, 15), (150, 300)]
 
-        risultato_barra = {
+        bar_result = {
             'Id_Barra': i+1,
-            'Difetto': difetto_nome,
-            'Temp_Iniziale': caso_reale['Rolling_Temp_C'],
-            'Speed_Iniziale': caso_reale['Roller_Speed_m_sec'],
-            'Press_Iniziale': caso_reale['Pressure_Bar']
+            'Difetto': defect_name,
+            'Temp_Iniziale': real_case['Rolling_Temp_C'],
+            'Speed_Iniziale': real_case['Roller_Speed_m_sec'],
+            'Press_Iniziale': real_case['Pressure_Bar']
         }
 
         # Testo entrambi i modelli sulla stessa barra
-        for nome_modello, modello_corrente in modelli_da_testare:
+        for model_name, current_model in models_to_test:
             
-            # --- FUNZIONE DI SMISTAMENTO CHIAMATE ---
-            def ottieni_probabilita(mod, nome, dati):
-                if nome == "XGBoost":
-                    return mod.predict_proba(dati)[0][difetto_previsto_idx]
+          # calcolo della probabilità di errore
+            def get_probability(model, name, data):
+                if name == "XGBoost":
+                    return model.predict_proba(data)[0][predicted_defect_idx]
                 else: # TensorFlow
-                    return mod(np.array(dati), training=False).numpy()[0][difetto_previsto_idx]
-            # ----------------------------------------
-
-            prob_iniziale = ottieni_probabilita(modello_corrente, nome_modello, riga_scalata)
+                    return model(np.array(data), training=False).numpy()[0][predicted_defect_idx]
             
+            initial_prob = get_probability(current_model, model_name, scaled_row)
+
+            # Funzione obiettivo con penalità
             def objective_function(x_new):
-                row_simulation = caso_reale.values.copy() 
+                row_simulation = real_case.values.copy() 
                 row_simulation[idx_temp] = x_new[0]         
                 row_simulation[idx_speed] = x_new[1]        
                 row_simulation[idx_press] = x_new[2]        
@@ -571,133 +597,133 @@ if not SKIP_STEP6:
                 row_scaled = scaler.transform(row_simulation.reshape(1, -1))
                 
                 # Uso lo smistatore invece del wrapper
-                prob_difetto = ottieni_probabilita(modello_corrente, nome_modello, row_scaled)
+                defect_prob = get_probability(current_model, model_name, row_scaled)
 
-                penalita_temp = ((x_new[0] - caso_reale['Rolling_Temp_C']) / caso_reale['Rolling_Temp_C'])**2
-                penalita_speed = ((x_new[1] - caso_reale['Roller_Speed_m_sec']) / caso_reale['Roller_Speed_m_sec'])**2
-                penalita_press = ((x_new[2] - caso_reale['Pressure_Bar']) / caso_reale['Pressure_Bar'])**2
+                temp_penalty = ((x_new[0] - real_case['Rolling_Temp_C']) / real_case['Rolling_Temp_C'])**2
+                speed_penalty = ((x_new[1] - real_case['Roller_Speed_m_sec']) / real_case['Roller_Speed_m_sec'])**2
+                press_penalty = ((x_new[2] - real_case['Pressure_Bar']) / real_case['Pressure_Bar'])**2
                 
-                return prob_difetto + (0.5 * (penalita_temp + penalita_speed + penalita_press))
+                return defect_prob + (0.5 * (temp_penalty + speed_penalty + press_penalty))
 
         
-            # --- INIZIO MISURAZIONE TEMPO ---
-            inizio_ottimizzazione = time.perf_counter()
-            
-            result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
-            
-            fine_ottimizzazione = time.perf_counter()
-            tempo_impiegato = fine_ottimizzazione - inizio_ottimizzazione
-            # --- FINE MISURAZIONE TEMPO ---
+            # Inizio misura tempo di esecuzione
+            optimization_start = time.perf_counter()
 
-            risultato_barra[f'Prob_Iniziale_{nome_modello}'] = prob_iniziale
-            risultato_barra[f'Tempo_Esecuzione_{nome_modello}'] = tempo_impiegato # <-- SALVA IL TEMPO
+            # Minimizzo la funzione
+            result = minimize(objective_function, x0, method='Powell', bounds=bounds, tol=1e-3, options={'maxiter': 30})
+
+            # Fine misura tempo di esecuzione
+            optimization_end = time.perf_counter()
+            elapsed_time = optimization_end - optimization_start
+            
+
+            bar_result[f'Probabilità_Iniziale_{model_name}'] = initial_prob
+            bar_result[f'Tempo_Esecuzione_{model_name}'] = elapsed_time 
             
             if result.success:
-                row_finale = caso_reale.values.copy()
-                row_finale[idx_temp], row_finale[idx_speed], row_finale[idx_press] = result.x
-                row_df_fin = pd.DataFrame(row_finale.reshape(1, -1), columns=X_test.columns)
+                final_row = real_case.values.copy()
+                final_row[idx_temp], final_row[idx_speed], final_row[idx_press] = result.x
+                row_df_fin = pd.DataFrame(final_row.reshape(1, -1), columns=X_test.columns)
+                new_prob = get_probability(current_model, model_name, scaler.transform(row_df_fin))
                 
-                # Ricalcolo il risultato finale usando lo smistatore
-                new_prob = ottieni_probabilita(modello_corrente, nome_modello, scaler.transform(row_df_fin))
-                
-                risultato_barra[f'Prob_Finale_{nome_modello}'] = new_prob
-                risultato_barra[f'Temp_Finale_{nome_modello}'] = result.x[0]
-                risultato_barra[f'Press_Finale_{nome_modello}'] = result.x[2]
-                risultato_barra[f'Vel_Finale_{nome_modello}'] = result.x[1]
-                risultato_barra[f'Delta_Temp_{nome_modello}'] = abs(result.x[0] - caso_reale['Rolling_Temp_C'])
-                risultato_barra[f'Delta_Press_{nome_modello}'] = abs(result.x[2] - caso_reale['Pressure_Bar'])
-                risultato_barra[f'Delta_Vel_{nome_modello}'] = abs(result.x[1] - caso_reale['Roller_Speed_m_sec'])
-                risultato_barra[f'Successo_{nome_modello}'] = True
+                bar_result[f'Prob_Finale_{model_name}'] = new_prob
+                bar_result[f'Temp_Finale_{model_name}'] = result.x[0]
+                bar_result[f'Press_Finale_{model_name}'] = result.x[2]
+                bar_result[f'Vel_Finale_{model_name}'] = result.x[1]
+                bar_result[f'Delta_Temp_{model_name}'] = abs(result.x[0] - real_case['Rolling_Temp_C'])
+                bar_result[f'Delta_Press_{model_name}'] = abs(result.x[2] - real_case['Pressure_Bar'])
+                bar_result[f'Delta_Vel_{model_name}'] = abs(result.x[1] - real_case['Roller_Speed_m_sec'])
+                bar_result[f'Successo_{model_name}'] = True
             else:
-                risultato_barra[f'Prob_Finale_{nome_modello}'] = prob_iniziale
-                risultato_barra[f'Temp_Finale_{nome_modello}'] = 0
-                risultato_barra[f'Press_Finale_{nome_modello}'] = 0
-                risultato_barra[f'Vel_Finale_{nome_modello}'] = 0
-                risultato_barra[f'Delta_Temp_{nome_modello}'] = 0
-                risultato_barra[f'Delta_Press_{nome_modello}'] = 0
-                risultato_barra[f'Delta_Vel_{nome_modello}'] = 0
-                risultato_barra[f'Successo_{nome_modello}'] = False
+                bar_result[f'Prob_Finale_{model_name}'] = initial_prob
+                bar_result[f'Temp_Finale_{model_name}'] = 0
+                bar_result[f'Press_Finale_{model_name}'] = 0
+                bar_result[f'Vel_Finale_{model_name}'] = 0
+                bar_result[f'Delta_Temp_{model_name}'] = 0
+                bar_result[f'Delta_Press_{model_name}'] = 0
+                bar_result[f'Delta_Vel_{model_name}'] = 0
+                bar_result[f'Successo_{model_name}'] = False
 
-        # Aggiungo la barra completata alla lista dei risultati
-        risultati_simulazione.append(risultato_barra)
+        # Aggiungo la barra completata alla lista dei results
+        simulation_results.append(bar_result)
 
-    # 4. Converto tutto in un DataFrame e lo salvo in Excel
-    df_simulazione = pd.DataFrame(risultati_simulazione)
-    df_simulazione.to_excel(f"{folder_export}/06_Step6_Simulazione_Massiva_100.xlsx", index=False)
-    print(f"\nSimulazione completata. Dati grezzi salvati in '{folder_export}/06_Step6_Simulazione_Massiva_100.xlsx'")
+    # Salvo in excel per diagnostica
+    simulation_df = pd.DataFrame(simulation_results)
+    simulation_df.to_excel(f"{export_folder}/06_Step6_Simulazione_Massiva_100.xlsx", index=False)
+    print(f"\nSimulazione completata. Dati grezzi salvati in '{export_folder}/06_Step6_Simulazione_Massiva_100.xlsx'")
 
 #endregion
 
-#region STEP 7: Report Statistico della Simulazione
+#region STEP 7: Report Statistico sull'analisi prescrittiva
 if not SKIP_STEP7:
     print("\n=== STEP 7: REPORT STATISTICO SULL'ANALISI PRESCRITTIVA ===")
 
-    # Calcolo quante probabilità residue ci sono (più è bassa, più il modello ha curato bene il difetto)
-    media_prob_finale_xgb = df_simulazione['Prob_Finale_XGBoost'].mean()
-    media_prob_finale_mlp = df_simulazione['Prob_Finale_TensorFlow'].mean()
+    # Calcolo della probabilità media residua di anomalia post-ottimizzazione
+    avg_final_prob_xgb = simulation_df['Prob_Finale_XGBoost'].mean()
+    avg_final_prob_mlp = simulation_df['Prob_Finale_TensorFlow'].mean()
 
-    # Calcolo quanto ha dovuto "stressare" l'impianto per farcela
-    media_sforzo_temp_xgb = df_simulazione['Delta_Temp_XGBoost'].mean()
-    media_sforzo_temp_mlp = df_simulazione['Delta_Temp_TensorFlow'].mean()
+    # Quantificazione dello scostamento medio assoluto (Delta) imposto ai parametri
+    Delta_Temp_XGBoost = simulation_df['Delta_Temp_XGBoost'].mean()
+    Delta_Temp_TensorFlow = simulation_df['Delta_Temp_TensorFlow'].mean()
 
-    media_sforzo_press_xgb = df_simulazione['Delta_Press_XGBoost'].mean()
-    media_sforzo_press_mlp = df_simulazione['Delta_Press_TensorFlow'].mean()
+    Delta_Press_XGBoost = simulation_df['Delta_Press_XGBoost'].mean()
+    Delta_Press_TensorFlow = simulation_df['Delta_Press_TensorFlow'].mean()
 
-    media_sforzo_vel_xgb = df_simulazione['Delta_Vel_XGBoost'].mean()
-    media_sforzo_vel_mlp = df_simulazione['Delta_Vel_TensorFlow'].mean()
+    Delta_Spd_XGBoost = simulation_df['Delta_Vel_XGBoost'].mean()
+    Delta_Spd_TensorFlow = simulation_df['Delta_Vel_TensorFlow'].mean()
 
     # Calcolo del tempo medio di prescrizione per barra
-    media_tempo_xgb = df_simulazione['Tempo_Esecuzione_XGBoost'].mean()
-    media_tempo_mlp = df_simulazione['Tempo_Esecuzione_TensorFlow'].mean()
-    tempo_totale_xgb = df_simulazione['Tempo_Esecuzione_XGBoost'].sum()
-    tempo_totale_mlp = df_simulazione['Tempo_Esecuzione_TensorFlow'].sum()
+    avg_time_xgb = simulation_df['Tempo_Esecuzione_XGBoost'].mean()
+    avg_time_mlp= simulation_df['Tempo_Esecuzione_TensorFlow'].mean()
+    total_time_xgb = simulation_df['Tempo_Esecuzione_XGBoost'].sum()
+    total_time_mlp = simulation_df['Tempo_Esecuzione_TensorFlow'].sum()
 
-    # Calcolo quante volte il modello è riuscito a portare il rischio sotto una soglia di sicurezza (es. < 5%)
-    sicurezza_xgb = (df_simulazione['Prob_Finale_XGBoost'] < 0.05).sum()
-    sicurezza_mlp = (df_simulazione['Prob_Finale_TensorFlow'] < 0.05).sum()
+    # Calcolo di quante volte il modello è riuscito a portare il rischio sotto una soglia di sicurezza (< 5%)
+    safe_bars_xgb = (simulation_df['Prob_Finale_XGBoost'] < 0.05).sum()
+    safe_bars_mlp = (simulation_df['Prob_Finale_TensorFlow'] < 0.05).sum()
 
-    # Stampo il verdetto finale
+    # Stampa del verdetto finale
     print("\n1. CAPACITÀ DI RISOLUZIONE DEL DIFETTO:")
-    print(f" - Barre curate in sicurezza (<5% rischio) da XGBoost:    {sicurezza_xgb}/{NUM_TEST}")
-    print(f" - Barre curate in sicurezza (<5% rischio) da TensorFlow: {sicurezza_mlp}/{NUM_TEST}")
-    print(f" - Rischio medio residuo dopo prescrizione XGBoost:       {media_prob_finale_xgb:.2%}")
-    print(f" - Rischio medio residuo dopo prescrizione TensorFlow:    {media_prob_finale_mlp:.2%}")
+    print(f" - Barre curate in sicurezza (<5% rischio) da XGBoost:    {safe_bars_xgb}/{NUM_TEST}")
+    print(f" - Barre curate in sicurezza (<5% rischio) da TensorFlow: {safe_bars_mlp}/{NUM_TEST}")
+    print(f" - Rischio medio residuo dopo prescrizione XGBoost:       {avg_final_prob_xgb:.2%}")
+    print(f" - Rischio medio residuo dopo prescrizione TensorFlow:    {avg_final_prob_mlp:.2%}")
 
     print("\n2. VARIAZIONI MEDIE RICHIESTE ALL'IMPIANTO:")
-    print(f" - Variazione Temperatura XGBoost:    {media_sforzo_temp_xgb:.2f} °C")
-    print(f" - Variazione Temperatura TensorFlow: {media_sforzo_temp_mlp:.2f} °C")
-    print(f" - Variazione Pressione XGBoost:      {media_sforzo_press_xgb:.2f} bar")
-    print(f" - Variazione Pressione TensorFlow:   {media_sforzo_press_mlp:.2f} bar")
-    print(f" - Variazione Velocità XGBoost:       {media_sforzo_vel_xgb:.2f} m/s")
-    print(f" - Variazione Velocità TensorFlow:    {media_sforzo_vel_mlp:.2f} m/s")
+    print(f" - Variazione Temperatura XGBoost:    {Delta_Temp_XGBoost:.2f} °C")
+    print(f" - Variazione Temperatura TensorFlow: {Delta_Temp_TensorFlow:.2f} °C")
+    print(f" - Variazione Pressione XGBoost:      {Delta_Press_XGBoost:.2f} bar")
+    print(f" - Variazione Pressione TensorFlow:   {Delta_Press_TensorFlow:.2f} bar")
+    print(f" - Variazione Velocità XGBoost:       {Delta_Spd_XGBoost:.2f} m/s")
+    print(f" - Variazione Velocità TensorFlow:    {Delta_Spd_TensorFlow:.2f} m/s")
 
     print("\n3. PRESTAZIONI COMPUTAZIONALI (TEMPI DI OTTIMIZZAZIONE):")
-    print(f" - Tempo medio per barra XGBoost:     {media_tempo_xgb:.4f} secondi")
-    print(f" - Tempo medio per barra TensorFlow:  {media_tempo_mlp:.4f} secondi")
-    print(f" - Tempo totale per 100 barre XGBoost:{tempo_totale_xgb:.2f} secondi")
-    print(f" - Tempo totale per 100 barre TF:     {tempo_totale_mlp:.2f} secondi")
+    print(f" - Tempo medio per barra XGBoost:     {avg_time_xgb:.4f} secondi")
+    print(f" - Tempo medio per barra TensorFlow:  {avg_time_mlp:.4f} secondi")
+    print(f" - Tempo totale per 100 barre XGBoost:{total_time_xgb:.2f} secondi")
+    print(f" - Tempo totale per 100 barre TF:     {total_time_mlp:.2f} secondi")
 
-    # Logica per dichiarare il vincitore
-    if (media_prob_finale_xgb < media_prob_finale_mlp):
-        vincitore = "XGBoost"
+    # Selezione del modello vincitore
+    if (avg_final_prob_xgb < avg_final_prob_mlp):
+        winner = "XGBoost"
     else:
-        vincitore = "Rete Neurale (TensorFlow)"   
-    print(f"\n VERDETTO DELLA SIMULAZIONE: {vincitore} è il modello più efficace nella prescrizione!")
+        winner = "Rete Neurale (TensorFlow)"   
+    print(f"\n VERDETTO DELLA SIMULAZIONE: {winner} è il modello più efficace nella prescrizione!")
 
-    # Salvataggio di questo report in un file di testo pulito
-    with open(f"{folder_export}/07_Step7_Report_Statistico.txt", "w") as file:
+    # Salvataggio dei valori per diagnostica
+    with open(f"{export_folder}/07_Step7_Report_Statistico.txt", "w") as file:
         file.write("=== REPORT STATISTICO SULL'ANALISI PRESCRITTIVA (100 BARRE) ===\n\n")
-        file.write(f"Barre curate in sicurezza (<5%) da XGBoost:    {sicurezza_xgb}/{NUM_TEST}\n")
-        file.write(f"Barre curate in sicurezza (<5%) da TensorFlow: {sicurezza_mlp}/{NUM_TEST}\n")
-        file.write(f"Variazione media Temperatura XGBoost:          {media_sforzo_temp_xgb:.2f} °C\n")
-        file.write(f"Variazione media Temperatura TensorFlow:       {media_sforzo_temp_mlp:.2f} °C\n")
-        file.write(f"Variazione media Pressione XGBoost:            {media_sforzo_press_xgb:.2f} bar\n")
-        file.write(f"Variazione media Pressione TensorFlow:         {media_sforzo_press_mlp:.2f} bar\n")
-        file.write(f"Variazione media Velocità XGBoost:             {media_sforzo_vel_xgb:.2f} m/s\n")
-        file.write(f"Variazione media Velocità TensorFlow:          {media_sforzo_vel_mlp:.2f} m/s\n")
-        file.write(f"Vincitore Globale:                             {vincitore}\n")
-        file.write(f"\nTempo medio per barra XGBoost:                 {media_tempo_xgb:.4f} sec\n")
-        file.write(f"Tempo medio per barra TensorFlow:              {media_tempo_mlp:.4f} sec\n")
-        file.write(f"Tempo totale (100 barre) XGBoost:              {tempo_totale_xgb:.2f} sec\n")
-        file.write(f"Tempo totale (100 barre) TensorFlow:           {tempo_totale_mlp:.2f} sec\n")
+        file.write(f"Barre curate in sicurezza (<5%) da XGBoost:    {safe_bars_xgb}/{NUM_TEST}\n")
+        file.write(f"Barre curate in sicurezza (<5%) da TensorFlow: {safe_bars_mlp}/{NUM_TEST}\n")
+        file.write(f"Variazione media Temperatura XGBoost:          {Delta_Temp_XGBoost:.2f} °C\n")
+        file.write(f"Variazione media Temperatura TensorFlow:       {Delta_Temp_TensorFlow:.2f} °C\n")
+        file.write(f"Variazione media Pressione XGBoost:            {Delta_Press_XGBoost:.2f} bar\n")
+        file.write(f"Variazione media Pressione TensorFlow:         {Delta_Press_TensorFlow:.2f} bar\n")
+        file.write(f"Variazione media Velocità XGBoost:             {Delta_Spd_XGBoost:.2f} m/s\n")
+        file.write(f"Variazione media Velocità TensorFlow:          {Delta_Spd_TensorFlow:.2f} m/s\n")
+        file.write(f"Vincitore Globale:                             {winner}\n")
+        file.write(f"\nTempo medio per barra XGBoost:                 {avg_time_xgb:.4f} sec\n")
+        file.write(f"Tempo medio per barra TensorFlow:              {avg_time_mlp:.4f} sec\n")
+        file.write(f"Tempo totale (100 barre) XGBoost:              {total_time_xgb:.2f} sec\n")
+        file.write(f"Tempo totale (100 barre) TensorFlow:           {total_time_mlp:.2f} sec\n")
 #endregion
