@@ -61,7 +61,7 @@ tf.get_logger().setLevel('ERROR')
 # Costanti
 TEST_SIZE = 0.2         # Percentuale del 20% di test
 VALIDATION_SIZE = 0.2   # Percentuale del 20% di parte validazione
-RANDOM_SEED = 42       # Inizializzazione del random seed
+RANDOM_SEED = 1979       # Inizializzazione del random seed
 
 # Variabili
 export_folder = "export_dati"
