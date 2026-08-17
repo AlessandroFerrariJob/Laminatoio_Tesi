@@ -362,9 +362,9 @@ if PRINT_GRAPH:
 print("\n--- STEP 4B: Ricerca Iperparametri Rete Neurale (TensorFlow) ---")                 
 
 # Definizione dello spazio degli iperparametri
-hidden_layer_sizes_options = [(32,), (64,), (32, 16), (64, 32)]    # 4 architetture (da semplici a profonde a imbuto)
-activation_options = ['relu', 'tanh']                             # 2 funzioni di attivazione classiche
-learning_rate_options = [0.005, 0.01]                             # 2 velocità (Adam di default a 0.001, e una più aggressiva a 0.01)
+hidden_layer_sizes_options = [(32,), (64,), (32, 16), (64, 32)]    
+activation_options = ['relu', 'tanh']                             
+learning_rate_options = [0.005, 0.01]                           
 alpha_options = [0.0001, 0.01]
 
 # Isolamento delle variabili di validazione

@@ -3,14 +3,14 @@
 Barre curate in sicurezza (<5%) da XGBoost:    97/100
 Barre curate in sicurezza (<5%) da TensorFlow: 100/100
 Variazione media Temperatura XGBoost:          33.73 °C
-Variazione media Temperatura TensorFlow:       61.78 °C
+Variazione media Temperatura TensorFlow:       61.30 °C
 Variazione media Pressione XGBoost:            8.91 bar
-Variazione media Pressione TensorFlow:         4.82 bar
+Variazione media Pressione TensorFlow:         4.63 bar
 Variazione media Velocità XGBoost:             1.71 m/s
-Variazione media Velocità TensorFlow:          1.56 m/s
+Variazione media Velocità TensorFlow:          1.55 m/s
 Vincitore Globale:                             Rete Neurale (TensorFlow)
 
-Tempo medio per barra XGBoost:                 0.2868 sec
-Tempo medio per barra TensorFlow:              1.1683 sec
-Tempo totale (100 barre) XGBoost:              28.68 sec
-Tempo totale (100 barre) TensorFlow:           116.83 sec
+Tempo medio per barra XGBoost:                 0.1172 sec
+Tempo medio per barra TensorFlow:              0.4380 sec
+Tempo totale (100 barre) XGBoost:              11.72 sec
+Tempo totale (100 barre) TensorFlow:           43.80 sec
